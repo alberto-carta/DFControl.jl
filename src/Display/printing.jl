@@ -278,5 +278,7 @@ function Base.show(io::IO, ::MIME"text/plain", proj::Projection)
     return println(io, crayon"red", "last index: ", crayon"reset", "$(proj.last)")
 end
 
-Base.show(io::IO, dftu::DFTU) = print(io, "l=$(dftu.l), U=$(dftu.U), J0=$(dftu.J0), α=$(dftu.α), β=$(dftu.β), J=$(dftu.J), projection=$(dftu.projection_type)")
+function Base.show(io::IO, dftu::DFTU)
+    print(io, "l=$(dftu.l), types=$(dftu.types), manifolds=$(dftu.manifolds), values=$(dftu.values) eV, α=$(dftu.α), β=$(dftu.β), projection=$(dftu.projection_type)")
+end
 

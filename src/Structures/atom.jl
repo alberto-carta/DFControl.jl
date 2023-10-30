@@ -1,3 +1,5 @@
+# @enum HubbardType U J J0 B E2 E3 V
+const hubbard_type=Set(["U", "J", "J0", "B", "E2", "E3", "V"])
 """
     DFTU(;l ::Int = -1,
           U ::T   = zero(T),
@@ -9,15 +11,16 @@
 DFT+U parameters for a given [`Atom`](@ref).
 """
 Base.@kwdef mutable struct DFTU
-    l::Int      = -1
-    U::Float64  = 0.0
-    J0::Float64 = 0.0
-    #QE params
-    α::Float64 = 0.0
-    β::Float64 = 0.0
-    J::Vector{Float64} = [0.0]
-    projection_type::String = "ortho-atomic"
+    l::Int                     = -1
+    types::Vector{String}      = [] # U J J0 B E2 E3 V
+    manifolds::Vector{String}  = [] # for V, it includes both manifolds
+    values::Vector{Float64}    = []
+    #QE hubbard settings
+    α::Float64                 = 0.0
+    β::Float64                 = 0.0
+    projection_type::String    = "ortho-atomic"
 end
+
 function DFTU(dict::JSON3.Object)
     return DFTU(;dict...)
 end
