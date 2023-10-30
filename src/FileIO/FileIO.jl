@@ -8,7 +8,7 @@ using ..Utils
 using ..Calculations
 using ..Calculations: Calculation
 using ..Structures
-using ..Structures: Pseudo
+using ..Structures: Pseudo 
 using ..Jobs
 using ..DFControl: Point,Point3, Vec3, SVector, Mat3, Mat4, Band, TimingData
 

@@ -1,4 +1,5 @@
 import Base: parse
+import ..Structures: hubbard_type
 
 function readoutput(c::Calculation{<:AbstractQE}, files...; kwargs...)
     return qe_parse_output(c, files...; kwargs...)
@@ -1142,6 +1143,19 @@ function qe_parse_flags(inflags, nat::Int=0)
 end
 
 
+CARDS = Set([
+    "cell_parameters",
+    "occupations",
+    "hubbard",
+    "k_points",
+    "solvents",
+    "atomic_species",
+    "atomic_positions",
+    "additional_k_points",
+    "atomic_forces",
+    "constraints",
+    "atomic_velocities"])
+
 """
     qe_parse_calculation(file)
 
@@ -1171,6 +1185,7 @@ function qe_parse_calculation(file)
     flagmatches = Dict{Symbol, Vector{RegexMatch}}()
     curv = nothing
     blockreg = r"&([\w\d]+)"
+    card_ids = Int[]
     for (i, l) in enumerate(lines)
         m = match(blockreg, l)
         if m !== nothing
@@ -1184,12 +1199,22 @@ function qe_parse_calculation(file)
             push!(curv, m)
             continue
         end
+        if lowercase(split(l)[1]) ∈ CARDS
+            push!(card_ids)
+        end
+
         push!(unused_ids, i)
     end
+    sort!(card_ids)
         
     function findcard(s)
         idid = findfirst(i -> occursin(s, lowercase(lines[i])), unused_ids)
         return idid !== nothing ? unused_ids[idid] : nothing
+    end
+
+    function nextcard(i)
+        id = findfirst(j->j>i, card_ids)
+        return id !== nothing ? id : length(lines)
     end
         
     used_lineids = Int[]
@@ -1249,30 +1274,31 @@ function qe_parse_calculation(file)
             projection_type = String(cardoption(lines[i_hubbard]))
             push!(used_lineids, i_hubbard)
 
+            # go through Hubbard card
             dftus = Dict{Symbol, DFTU}()
-            for k in 1:ntyp
-                push!(used_lineids, i_hubbard + k)
-                
-                par, atsym_manifold, sval = split(lines[i_hubbard+k])
-                val = parse(Float64, sval)
-
-                atsym = Symbol(split(atsym_manifold, "-")[1])
+            for k in i_hubbard+1:nextcard(i_hubbard)-1
+                push!(used_lineids, k)
+                isempty(lines[k]) && continue
+                hubline = split(lines[k])
+                hubtype = hubline[1]
+                val = parse(Float64, hubline[end])
+                manifolds = hubline[2:end-1]
+                atsym = Symbol(split(manifolds[1], "-")[1])
 
                 dftu = get!(dftus, atsym, DFTU())
                 dftu.projection_type = projection_type
                 
-                if par == "U"
-                    dftu.U = val
-                elseif par == "J0"
-                    dftu.J0 = val
-                elseif par == "J"
-                    dftu.J[1] = val
-                elseif par == "B" || par == "E2"
-                    dftu.J[2] = val
-                elseif par == "E3"
-                    dftu.J[3] = val
+                push!(dftu.types, hubtype)
+                push!(dftu.manifolds, join(manifolds, " "))
+                push!(dftu.values, val)
+            end
+            # add empty DFTU object for atoms without Hubbard values
+            map(atsyms) do atsym
+                if atsym ∉ keys(dftus)
+                    dftus[atsym] = DFTU()
                 end
             end
+
             structure = extract_structure!(sysflags, (option = cell_option, data=cell), atsyms,
                                        (option = atoms_option, data=atoms), (data=pseudos,), dftus)
                 
