@@ -41,6 +41,8 @@ function qe_parse_output(c::Calculation{<:AbstractQE} , files...; kwargs...)
         return qe_parse_projwfc_output(files...)
     elseif Calculations.ishp(c)
         return qe_parse_hp_output(files...; kwargs...)
+    elseif Calculations.ismd(c)
+        return qe_parse_pwmd_output(files[1]; kwargs...)
     elseif Calculations.ispw(c)
         return qe_parse_pw_output(files[1]; kwargs...)
     end
@@ -312,6 +314,7 @@ function qe_parse_cell_parameters(out, line, f)
                                           parse.(Float64, split(readline(f)))], (3, 3))')
 end
 #! format: on
+
 function qe_parse_atomic_positions(out, line, f)
     out[:pos_option] = cardoption(line)
     line = readline(f)
@@ -695,6 +698,167 @@ function qe_parse_pw_output(str;
          :cell_parameters, :in_recip_cell, :scf_converged, :atsyms, :nat, :k_eigvals,
          :k_cryst, :k_cart, :starting_simplified_dftu, :starting_magnetization)
         pop!(out, f, nothing)
+    end
+    return out
+end
+
+########################################
+#          parsing pw md               #
+########################################
+function Base.push!(out::Dict, k::Symbol, v)
+    if haskey(out, k)
+        push!(out[k], v)
+    else
+        out[k] = [v]
+    end
+end
+
+function qe_md_parse_total_energy(out, line, f)
+    step = out[:step]
+    if haskey(out[:total_energy], step)
+        push!(out[:total_energy][step], parse(Float64, split(line)[end-1]))
+    else
+        out[:total_energy][step] = [parse(Float64, split(line)[end-1])]
+    end
+end
+
+function qe_md_parse_step(out, line,  f)
+    cur_step = parse(Int, split(line)[end])
+    prev_step = get!(out, :step, 0)
+    if cur_step > prev_step
+        out[:step] = cur_step
+    else
+        error("md iteration parsing error")
+    end
+end
+
+function qe_md_parse_convergence(out, line, f)
+    push!(out, :scf_convergence, parse(Float64, split(line)[end-1]))
+end
+
+function qe_md_parse_kinetic(out, line, f)
+    push!(out, :kinetic, parse(Float64, split(line)[end-1]))
+
+    line = readline(f)
+    push!(out, :temperature, parse(Float64, split(line)[end-1]))
+
+    line = readline(f)
+    push!(out, :md_total_energy, parse(Float64, split(line)[end-1]))
+end
+
+function qe_md_parse_atomic_positions(out, line, f)
+    out[:pos_option] = cardoption(line)
+    line = readline(f)
+    atoms = Tuple{Symbol,Point3{Float64}}[]
+    while length(atoms) < out[:nat]
+        s_line = split(line)
+        key    = Symbol(s_line[1])
+        push!(atoms, (key, Point3(parse.(Float64, s_line[2:end])...)))
+        line = readline(f)
+    end
+    push!(out, :atomic_positions, atoms)
+end
+
+
+function qe_md_parse_highest_lowest(out, line, f)
+    sline = split(line)
+    high = parse(Float64, sline[end-1])
+    low = parse(Float64, sline[end])
+    push!(out, :fermi, high)
+    push!(out, :highest_occupied, high)
+    push!(out, :lowest_occupied, low)
+end
+
+function qe_md_parse_force(out, line, f)
+    sline = split(line)
+    out[:force_axes] = sline[5][2:end]
+
+    readline(f) 
+    forces = Vec3{Float64}[]
+
+    for i = 1:out[:nat]
+        sline = split(readline(f))
+        push!(forces, Vec3(parse.(Float64, sline[end-2:end])))
+    end
+    push!(out, :forces, forces)
+end
+
+function qe_md_parse_total_magnetization(out, line, f)
+    for i = 1:3
+        line = readline(f)
+    end
+    push!(out, :total_magnetization, parse(Float64, split(line)[end-2]))
+end
+
+function qe_md_parse_timestep(out, line, f)
+    out[:time_step] = parse(Float64, split(line)[end-1])
+end
+
+const QE_MD_PARSE_FUNCTIONS = [
+    "Entering Dynamics"                    => qe_md_parse_step,
+    "Time step"                            => qe_md_parse_timestep,
+    "convergence has been"                 => qe_md_parse_convergence,
+    "kinetic energy"                       => qe_md_parse_kinetic,
+    "ATOMIC_POSITIONS"                     => qe_md_parse_atomic_positions,
+    "JOB DONE."                            => (x, y, z) -> x[:finished] = true,
+    "lattice parameter"                    => qe_parse_lattice_parameter,
+    "number of Kohn-Sham states"           => qe_parse_n_KS,
+    "number of electrons"                  => qe_parse_n_electrons,
+    "crystal axes"                         => qe_parse_crystal_axes,
+    "reciprocal axes"                      => qe_parse_reciprocal_axes,
+    "atomic species   valence    mass"     => qe_parse_atomic_species,
+    "number of atoms/cell"                 => qe_parse_nat,
+    "Crystallographic axes"                => qe_parse_crystal_positions,
+    "Cartesian axes"                       => qe_parse_cart_positions,
+    "cryst."                               => qe_parse_k_cryst,
+    "cart."                                => qe_parse_k_cart,
+    "PseudoPot"                            => qe_parse_pseudo,
+    # "the Fermi energy is"                => qe_md_parse_fermi,
+    "highest occupied, lowest unoccupied " => qe_md_parse_highest_lowest,
+    "SPIN UP"                              => (x, y, z) -> x[:colincalc] = true,
+    "Forces acting on atoms"               => qe_md_parse_force,
+    "!    total energy"                    => qe_md_parse_total_magnetization,
+    # "bands (ev)"                         => qe_parse_k_eigvals,
+    # "End of self-consistent"             => (x, y, z) -> haskey(x,:k_eigvals) && empty!(x[:k_eigvals]),
+    # "End of band structure"              => (x, y, z) -> haskey(x, :k_eigvals) && empty!(x[:k_eigvals]),
+    # "CELL_PARAMETERS ("                  => qe_parse_cell_parameters,
+    # "ATOMIC_POSITIONS ("                 => qe_parse_atomic_positions,
+    # "Total force"                        => qe_parse_total_force,
+    # "iteration #"                        => qe_parse_scf_iteration,
+    # "Magnetic moment per site"           => qe_parse_colin_magmoms,
+    # "estimated scf accuracy"             => qe_parse_scf_accuracy,
+    # "total magnetization"                => qe_parse_total_magnetization,
+    # "Begin final coordinates"            => (x, y, z) -> x[:converged] = true,
+    # "atom number"                        => qe_parse_magnetization,
+    # "--- enter write_ns ---"             => qe_parse_Hubbard,
+    # "HUBBARD OCCUPATIONS"                => qe_parse_Hubbard,
+    # "Hubbard energy"                     => qe_parse_Hubbard_energy,
+    # "HUBBARD ENERGY"                     => qe_parse_Hubbard_energy,
+    # "stan-stan stan-bac"                 => qe_parse_Hubbard_values,
+    # "init_run"                           => qe_parse_timing,
+    # "Starting magnetic structure"        => qe_parse_starting_magnetization,
+    # "Simplified LDA+U calculation"       => qe_parse_starting_simplified_dftu,
+]
+
+"""
+    qe_parse_pwmd_output(str::String; parse_funcs::Vector{Pair{String}}=Pair{String,<:Function}[])
+
+Reads a pw quantum espresso md output file, returns a dictionary with parsed data.
+Default parsing functions are defined in QE_MD_PARSE_FUNCTIONS, additional `parse_funcs` should be
+of the form: `func(out_dict, line, f)` with `f` the file and `line` is the line in file matched by
+given needle.
+Entries in the output dictionary includes,
+`finished`: `true` if the job terminates normally, `false` otherwise
+`time_step`: MD time step in fs
+`forces`: forces for each MD step in Ry/au using cartesian axes
+`atomic_positions`: atomic positions of each MD step
+"""
+function qe_parse_pwmd_output(
+    str; parse_funcs::Vector{<:Pair{String}} = Pair{String}[])
+    out = Dict{Symbol, Any}(:step=>0)
+    out = parse_file(str, QE_MD_PARSE_FUNCTIONS; extra_parse_funcs = parse_funcs)
+    if !haskey(out, :finished)
+        out[:finished] = false
     end
     return out
 end
