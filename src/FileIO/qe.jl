@@ -470,6 +470,7 @@ function qe_parse_starting_magnetization(out, line, f)
     end
 end
 
+
 function qe_parse_starting_simplified_dftu(out, line, f)
     readline(f)
     out[:starting_simplified_dftu] = Dict{Symbol,DFTU}()
@@ -479,8 +480,11 @@ function qe_parse_starting_simplified_dftu(out, line, f)
         atsym = Symbol(sline[1])
         L = parse(Int, sline[2])
         vals = parse.(Float64, sline[3:end])
-        out[:starting_simplified_dftu][atsym] = DFTU(; l = L, U = vals[1], α = vals[2],
-                                                     J0 = vals[3], β = vals[4])
+        # TODO test
+        out[:starting_simplified_dftu][atsym] = DFTU(;
+            l = L, types=["U", "J0"], values = [vals[1], vals[3]],
+            manifolds=["$(sline[1])-$(sline[2])", "$(sline[1])-$(sline[2])"],
+            α = vals[2], β = vals[4])
         line = readline(f)
     end
 end
@@ -493,6 +497,25 @@ function qe_parse_Hubbard_energy(out, line, f)
     else
         push!(out[:Hubbard_energy], val)
     end
+end
+
+function qe_parse_Hubbard_values(out, line, f)
+    # to properly parse this block, need to understand how the supercell is
+    # constructed in qe to match atom id with atom labels
+    # TODO: for now parsing only U
+    hubbard_values = Dict{Int, Tuple{String, Float64}}()
+    line = readline(f)
+    while !(isempty(line) || eof(f))
+        sline = split(line)
+        isempty(sline) && break
+        atom_id = parse(Int, sline[1])
+        value = parse(Float64, sline[6])
+        if sline[1] == sline[2] && value != 0.0
+            hubbard_values[atom_id] = ("U", value)
+        end
+        line = readline(f)
+    end
+    out[:Hubbard_values] = hubbard_values
 end
         
 
@@ -535,6 +558,7 @@ const QE_PW_PARSE_FUNCTIONS = ["C/m^2" => qe_parse_polarization,
                                "HUBBARD OCCUPATIONS" => qe_parse_Hubbard,
                                "Hubbard energy" => qe_parse_Hubbard_energy,
                                "HUBBARD ENERGY" => qe_parse_Hubbard_energy,
+                               "stan-stan stan-bac" => qe_parse_Hubbard_values,
                                "init_run" => qe_parse_timing,
                                "Starting magnetic structure" => qe_parse_starting_magnetization,
                                "Simplified LDA+U calculation" => qe_parse_starting_simplified_dftu,
@@ -566,6 +590,7 @@ function qe_parse_pw_output(str;
         pseudo_data = InputData(:atomic_species, :none, out[:pseudos])
         tmp_flags = Dict{Symbol,Any}(:ibrav => 0)
         tmp_flags[:A] = out[:in_alat]
+        tmp_flags[:Hubbard_values] = out[:Hubbard_values]
         # TODO: Hubbard
         out[:initial_structure] = extract_structure!(tmp_flags, cell_data,
                                                      out[:atsyms], atoms_data, pseudo_data, nothing)
@@ -601,6 +626,7 @@ function qe_parse_pw_output(str;
         cell_data = InputData(:cell_parameters, :alat, out[:cell_parameters])
         atoms_data = InputData(:atomic_positions, out[:pos_option], out[:atomic_positions])
         #TODO: Hubbard
+        tmp_flags[:Hubbard_values] = out[:Hubbard_values]
         out[:final_structure] = extract_structure!(tmp_flags, cell_data,
                                                    out[:atsyms], atoms_data, pseudo_data, nothing)
         # Add starting mag and DFTU
@@ -978,30 +1004,21 @@ function extract_cell!(flags, cell_block)
     end
 end
 
-function qe_DFTU(speciesid::Int, parsed_flags::Dict{Symbol,Any},)
-    U  = 0.0
-    J0 = 0.0
-    J  = [0.0]
-    α  = 0.0
-    β  = 0.0
-    if haskey(parsed_flags, :Hubbard_U) && length(parsed_flags[:Hubbard_U]) >= speciesid
-        U = parsed_flags[:Hubbard_U][speciesid]
+function qe_DFTU(speciesid::Int, atsyms::AbstractVector{Symbol}, parsed_flags::Dict{Symbol,Any},)
+    if haskey(parsed_flags, :Hubbard_values)
+        @debug parsed_flags[:Hubbard_values]
+        if haskey(parsed_flags[:Hubbard_values], speciesid)
+            hub = parsed_flags[:Hubbard_values][speciesid]
+        else
+            return DFTU()
+        end
+        # TODO hardcoded for 3d
+        # can we get manifolds from output?
+        manifolds = String(atsyms[speciesid]) * "-3d"
+        return DFTU(; types=[hub[1]], values=[hub[2]], manifolds=[manifolds])
+    else
+        return DFTU()
     end
-    if haskey(parsed_flags, :Hubbard_J0) && length(parsed_flags[:Hubbard_J0]) >= speciesid
-        J0 = parsed_flags[:Hubbard_J0][speciesid]
-    end
-    if haskey(parsed_flags, :Hubbard_J) && length(parsed_flags[:Hubbard_J]) >= speciesid
-        J = Float64.(parsed_flags[:Hubbard_J][:, speciesid])
-    end
-    if haskey(parsed_flags, :Hubbard_alpha) &&
-       length(parsed_flags[:Hubbard_alpha]) >= speciesid
-        α = parsed_flags[:Hubbard_alpha][speciesid]
-    end
-    if haskey(parsed_flags, :Hubbard_beta) &&
-       length(parsed_flags[:Hubbard_beta]) >= speciesid
-        β = parsed_flags[:Hubbard_beta][speciesid]
-    end
-    return DFTU(; U = U, J0 = J0, α = α, β = β, J = sum(J) == 0 ? [0.0] : J)
 end
 
 degree2π(ang) = ang / 180 * π
@@ -1052,7 +1069,7 @@ function extract_atoms!(parsed_flags, atsyms, atom_block, pseudo_block, hubbard_
                    position_cart = primv * pos,
                    position_cryst = UnitfulAtomic.ustrip.(inv(cell) * pos), pseudo = pseudo,
                    magnetization = qe_magnetization(speciesid, parsed_flags),
-                   dftu = hubbard_block === nothing ? qe_DFTU(speciesid, parsed_flags) : hubbard_block[atsym]))
+                   dftu = hubbard_block === nothing ? qe_DFTU(speciesid, atsyms, parsed_flags) : hubbard_block[atsym]))
     end
 
     return atoms
@@ -1170,7 +1187,7 @@ function qe_parse_calculation(file)
     end
 
     pre_7_2=true
-    
+
     lines = map(contents) do l
         id = findfirst(isequal('!'), l)
         if id !== nothing
@@ -1179,7 +1196,7 @@ function qe_parse_calculation(file)
             l
         end
     end |> x -> filter(!isempty, x)
-     
+
     flagreg = r"([\w\d]+)(?:\(((?:\s*,*\d+\s*,*)*)\))?\s*=\s*([^!,\n]*)"
     unused_ids = Int[]
     flagmatches = Dict{Symbol, Vector{RegexMatch}}()
@@ -1206,7 +1223,7 @@ function qe_parse_calculation(file)
         push!(unused_ids, i)
     end
     sort!(card_ids)
-        
+
     function findcard(s)
         idid = findfirst(i -> occursin(s, lowercase(lines[i])), unused_ids)
         return idid !== nothing ? unused_ids[idid] : nothing
@@ -1216,7 +1233,7 @@ function qe_parse_calculation(file)
         id = findfirst(j->j>i, card_ids)
         return id !== nothing ? id : length(lines)
     end
-        
+
     used_lineids = Int[]
 
     allflags = Dict{Symbol, Dict{Symbol, Any}}()
