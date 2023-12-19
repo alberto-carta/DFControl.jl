@@ -1,5 +1,6 @@
 import Base: parse
 import ..Structures: hubbard_type
+import .FileIO: NeedleType
 
 function readoutput(c::Calculation{<:AbstractQE}, files...; kwargs...)
     return qe_parse_output(c, files...; kwargs...)
@@ -344,6 +345,19 @@ function qe_parse_total_force(out, line, f)
     end
 end
 
+function qe_parse_atomic_force(out, line, f)
+    sline = split(line)
+    out[:force_axes] = sline[5][2:end]
+    readline(f) 
+    forces = Vec3{Float64}[]
+
+    for i = 1:out[:nat]
+        sline = split(readline(f))
+        push!(forces, Vec3(parse.(Float64, sline[end-2:end])))
+    end
+    out[:forces]=forces
+end
+
 function qe_parse_scf_iteration(out, line, f)
     sline = split(line)
     it = length(sline[2]) == 1 ? parse(Int, sline[3]) :
@@ -522,7 +536,7 @@ function qe_parse_Hubbard_values(out, line, f)
 end
         
 
-const QE_PW_PARSE_FUNCTIONS = ["C/m^2" => qe_parse_polarization,
+const QE_PW_PARSE_FUNCTIONS::Vector{Pair{NeedleType, Any}}  = ["C/m^2" => qe_parse_polarization,
                                "lattice parameter" => qe_parse_lattice_parameter,
                                "number of Kohn-Sham states" => qe_parse_n_KS,
                                "number of electrons" => qe_parse_n_electrons,
@@ -550,6 +564,7 @@ const QE_PW_PARSE_FUNCTIONS = ["C/m^2" => qe_parse_polarization,
                                "CELL_PARAMETERS (" => qe_parse_cell_parameters,
                                "ATOMIC_POSITIONS (" => qe_parse_atomic_positions,
                                "Total force" => qe_parse_total_force,
+                               "Forces acting on atoms" => qe_parse_atomic_force,
                                "iteration #" => qe_parse_scf_iteration,
                                "Magnetic moment per site" => qe_parse_colin_magmoms,
                                "estimated scf accuracy" => qe_parse_scf_accuracy,
@@ -575,7 +590,7 @@ The additional `parse_funcs` should be of the form:
 `func(out_dict, line, f)` with `f` the file. 
 """
 function qe_parse_pw_output(str;
-                           parse_funcs::Vector{<:Pair{String}} = Pair{String}[])
+                           parse_funcs::Vector{<:Pair} = Pair{String}[])
     out = parse_file(str, QE_PW_PARSE_FUNCTIONS; extra_parse_funcs = parse_funcs)
     if !haskey(out, :finished)
         out[:finished] = false
@@ -593,8 +608,10 @@ function qe_parse_pw_output(str;
         pseudo_data = InputData(:atomic_species, :none, out[:pseudos])
         tmp_flags = Dict{Symbol,Any}(:ibrav => 0)
         tmp_flags[:A] = out[:in_alat]
-        tmp_flags[:Hubbard_values] = out[:Hubbard_values]
-        # TODO: Hubbard
+        if haskey(out, :Hubbard_values)
+            tmp_flags[:Hubbard_values] = out[:Hubbard_values]
+        end
+        # TODO: add Hubbard block
         out[:initial_structure] = extract_structure!(tmp_flags, cell_data,
                                                      out[:atsyms], atoms_data, pseudo_data, nothing)
         # Add starting mag and DFTU
@@ -769,7 +786,7 @@ function qe_md_parse_highest_lowest(out, line, f)
     push!(out, :lowest_occupied, low)
 end
 
-function qe_md_parse_force(out, line, f)
+function qe_md_parse_atomic_force(out, line, f)
     sline = split(line)
     out[:force_axes] = sline[5][2:end]
 
@@ -794,7 +811,7 @@ function qe_md_parse_timestep(out, line, f)
     out[:time_step] = parse(Float64, split(line)[end-1])
 end
 
-const QE_MD_PARSE_FUNCTIONS = [
+const QE_MD_PARSE_FUNCTIONS::Vector{Pair{NeedleType, Any}} = [
     "Entering Dynamics"                    => qe_md_parse_step,
     "Time step"                            => qe_md_parse_timestep,
     "convergence has been"                 => qe_md_parse_convergence,
@@ -816,7 +833,7 @@ const QE_MD_PARSE_FUNCTIONS = [
     # "the Fermi energy is"                => qe_md_parse_fermi,
     "highest occupied, lowest unoccupied " => qe_md_parse_highest_lowest,
     "SPIN UP"                              => (x, y, z) -> x[:colincalc] = true,
-    "Forces acting on atoms"               => qe_md_parse_force,
+    "Forces acting on atoms"               => qe_md_parse_atomic_force,
     "!    total energy"                    => qe_md_parse_total_magnetization,
     # "bands (ev)"                         => qe_parse_k_eigvals,
     # "End of self-consistent"             => (x, y, z) -> haskey(x,:k_eigvals) && empty!(x[:k_eigvals]),
@@ -854,7 +871,7 @@ Entries in the output dictionary includes,
 `atomic_positions`: atomic positions of each MD step
 """
 function qe_parse_pwmd_output(
-    str; parse_funcs::Vector{<:Pair{String}} = Pair{String}[])
+    str; parse_funcs::Vector{<:Pair} = Pair{String, Function}[])
     out = Dict{Symbol, Any}(:step=>0)
     out = parse_file(str, QE_MD_PARSE_FUNCTIONS; extra_parse_funcs = parse_funcs)
     if !haskey(out, :finished)
@@ -1225,7 +1242,7 @@ function extract_atoms!(parsed_flags, atsyms, atom_block, pseudo_block, hubbard_
         else
             elkey = getfirst(x -> x != atsym && Structures.element(x) == Structures.element(atsym),
                              keys(pseudo_block.data))
-            pseudo = elkey !== nothing ? pseudo_block.data[elkey] : ""
+            pseudo = elkey !== nothing ? pseudo_block.data[elkey] : Pseudo("", "", "")
         end
         speciesid = findfirst(isequal(atsym), atsyms)
         push!(atoms,
@@ -1241,7 +1258,7 @@ end
 
 function extract_structure!(parsed_flags, cell_block, atsyms, atom_block,
                             pseudo_block, hubbard_block)
-    if atom_block == nothing
+    if atom_block === nothing
         return nothing
     end
     cell = extract_cell!(parsed_flags, cell_block)
@@ -1547,6 +1564,7 @@ function qe_writeflag(f, flag, value)
     end
 end
 
+# TODO: fix for updated DFTU
 function qe_handle_hubbard_flags!(c::Calculation{QE}, str::Structure)
     u_ats = unique(str.atoms)
     isnc = Structures.isnoncolin(str)
@@ -1570,7 +1588,8 @@ function qe_handle_hubbard_flags!(c::Calculation{QE}, str::Structure)
         append!(flags_to_set,
                 [:Hubbard_U     => map(x -> x.dftu.U, u_ats),
                  :Hubbard_alpha => map(x -> x.dftu.α, u_ats),
-                 :Hubbard_beta  => map(x -> x.dftu.β, u_ats), :Hubbard_J     => Jarr,
+                 :Hubbard_beta  => map(x -> x.dftu.β, u_ats),
+                 :Hubbard_J     => Jarr,
                  :Hubbard_J0    => map(x -> x.dftu.J0, u_ats)])
     end
     if !isempty(flags_to_set) || haskey(c, :Hubbard_parameters)
@@ -1590,14 +1609,11 @@ function qe_handle_hubbard_flags!(c::Calculation{QE}, str::Structure)
     end
 end
 
+# TODO
 function qe_handle_hubbard_flags!(c::Calculation{QE7_2}, str::Structure)
     u_ats = unique(str.atoms)
     isnc = Structures.isnoncolin(str)
-    if any(x -> x.dftu.U != 0 ||
-                    x.dftu.J0 != 0.0 ||
-                    sum(x.dftu.J) != 0 ||
-                    sum(x.dftu.α) != 0, u_ats)
-                    
+    if any(a-> !isempty(a.dftu.types), u_ats)
         set_flags!(c, :lda_plus_u => true; print = false)
         if isnc
             set_flags!(c, :lda_plus_u_kind => 1; print = false)
@@ -1747,6 +1763,9 @@ function Base.write(f::AbstractString, c::Calculation{QE}, structure)
     end
 end
 
+# TODO: this is a bit counter-intuitive maybe?
+# Maybe tuple should be grouped into one line string
+# and vector should be split into multiple lines
 function write_data(f, data)
     if typeof(data) <: Matrix
         writedlm(f, data)
@@ -1787,7 +1806,7 @@ function write_structure(f, calculation::Calculation{QE7_2}, structure)
     write_positions_cell(f, calculation, structure)
     if haskey(calculation, :lda_plus_u)
         unique_at = unique(structure.atoms)
-        u_proj = unique(map(x->x.dftu.projection_type, filter(y -> y.dftu.U != 0 || y.dftu.J0 != 0 || y.dftu.J[1] != 0, unique_at)))
+        u_proj = unique(map(x->x.dftu.projection_type, filter(y -> !isempty(y.dftu.types), unique_at)))
         if length(u_proj) > 1
             @warn "Found different U proj types for different atoms, this is not supported so we use the first one: $(u_proj[1])"
         end
@@ -1795,21 +1814,26 @@ function write_structure(f, calculation::Calculation{QE7_2}, structure)
         for at in unique_at
             
             atsym = at.element.symbol
-            if at.dftu.U != 0.0
-                write(f, "U $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.U)\n")
-            end
-            if at.dftu.J0 != 0.0
-                write(f, "J0 $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.J0)\n")
-            end
-            if at.dftu.J[1] != 0.0
-                write(f, "J $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.J[1])\n")
-                if length(at.dftu.J) == 2
-                    write(f, "B $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.J[2])\n")
-                else
-                    write(f, "E2 $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.J[2])\n")
-                    write(f, "E3 $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.J[3])\n")
+            # TODO: to fix
+            for (i, t) in enumerate(at.dftu.types)
+                if t == "U"
+                    write(f, "  $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.values[i])\n")
+                elseif t == "J"
+                    write(f, "  $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.values[i])\n")
+                elseif t == "J0"
+                    write(f, "J0 $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.values[i])\n")
                 end
             end
+
+            # if at.dftu.J[1] != 0.0
+            #     write(f, "J $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.J[1])\n")
+            #     if length(at.dftu.J) == 2
+            #         write(f, "B $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.J[2])\n")
+            #     else
+            #         write(f, "E2 $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.J[2])\n")
+            #         write(f, "E3 $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.J[3])\n")
+            #     end
+            # end
         end
         write(f, "\n")
     end
