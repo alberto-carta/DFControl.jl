@@ -399,14 +399,25 @@ function qe_parse_magnetization(out, line, f)
     end
 end
 
+
 function qe_parse_timing(out, line, f)
+    # Timing information is printed with a tree structure, thus
+    # parent timing data should already be created when parsing
+    # its children, except for "*** rountines"
     out[:timing] = TimingData[]
     curparent = ""
+    egterg_prefix = ""
     while !occursin("PWSCF", line)
-        isempty(line) && (line = readline(f); continue)
+        isempty(line) && (line = strip(readline(f)); continue)
         sline = split(line)
         if line[end] == ':' # descent into call case
             curparent = String(sline[end][1:end-1])
+        elseif sline[end] == "routines" # descent into call case
+            curparent = sline[1] * " routines"
+            # data will be filled during cleanup
+            td = TimingData(curparent, Dates.CompoundPeriod(),
+                            Dates.CompoundPeriod(), 0, TimingData[])
+            push!(out[:timing], td)
         elseif length(sline) == 9 # normal call
             td = TimingData(String(sline[1]), qe_parse_time(sline[3]),
                                 qe_parse_time(sline[5]), parse(Int, sline[8]),
@@ -414,14 +425,12 @@ function qe_parse_timing(out, line, f)
             push!(out[:timing], td)
             if !isempty(curparent) # Child case
                 if curparent[1] == '*'
-                    if td.name[1] == 'c' || td.name[1] == 'r'
-                        curparent = replace(curparent, '*' => td.name[1])
-                        parent = getfirst(x -> x.name == curparent, out[:timing])
-                        curparent = replace(curparent, td.name[1] => '*')
-                    else
-                        parent = getfirst(x -> occursin(curparent[2:end], x.name),
-                                          out[:timing])
+                    if isempty(egterg_prefix)
+                        egterg_prefix = td.name[1]
                     end
+                    curparent = replace(curparent, '*' => egterg_prefix)
+                    parent = getfirst(x -> x.name == curparent, out[:timing])
+                    curparent = replace(curparent, egterg_prefix => '*')
                 else
                     parent = getfirst(x -> x.name == curparent, out[:timing])
                 end
@@ -438,6 +447,11 @@ function qe_parse_timing(out, line, f)
     for td in out[:timing]
         id = findfirst(x -> x == ':', td.name)
         td.name = id !== nothing ? td.name[id+1:end] : td.name
+        if isempty(td.cpu.periods) && !isempty(td.children)
+            td.cpu = sum(c->c.cpu, td.children)
+            td.wall = sum(c->c.wall, td.children)
+            td.calls = sum(c->c.calls, td.children)
+        end
     end
 end
 
