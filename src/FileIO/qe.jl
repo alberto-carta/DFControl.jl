@@ -1413,8 +1413,10 @@ function qe_handle_magnetism_flags!(c::Calculation, str::Structure)
     starts = Float64[]
     θs = Float64[]
     ϕs = Float64[]
-    ismagcalc = isnc ? true : Structures.ismagnetic(str)
+    # spin polarization if 1) nonclinear 2) starting_magnetization != 0 3) tot_magnetization
+    ismagcalc = isnc ? true : (Structures.ismagnetic(str) || haskey(c, :tot_magnetization))
     if ismagcalc
+        # noncolinear
         if isnc
             for m in mags
                 tm = normalize(m)
@@ -1430,6 +1432,7 @@ function qe_handle_magnetism_flags!(c::Calculation, str::Structure)
                 end
             end
             push!(flags_to_set, :noncolin => true)
+        # colinear
         else
             for m in mags
                 push!.((θs, ϕs), 0.0)
