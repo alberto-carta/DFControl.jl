@@ -25,6 +25,19 @@ function DFTU(dict::JSON3.Object)
     return DFTU(;dict...)
 end
 
+function Base.getproperty(dftu::DFTU, sym::Symbol)
+    if String(sym) ∈ hubbard_type
+        id = findfirst(x -> x == String(sym), dftu.types)
+        if id === nothing
+            return 0.0
+        else
+            return dftu.values[id]
+        end
+    else
+        return getfield(dftu, sym)
+    end
+end
+
 function Base.:(==)(x::DFTU, y::DFTU)
     fnames = fieldnames(DFTU)
     for fn in fnames
