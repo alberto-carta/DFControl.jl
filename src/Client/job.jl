@@ -168,7 +168,7 @@ function RemoteHPC.save(job::Job, workflow = nothing; versioncheck=true, kwargs.
     end
     
     file_buffers = write_calculations(job; kwargs...)
-    save(server, job.dir, environment, remote_calcs, name = job.name)
+    save(server, job.dir, environment, remote_calcs; name = job.name)
 
     for (n, b) in file_buffers
         write(server, joinpath(job.dir, n), take!(b))
