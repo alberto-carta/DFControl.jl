@@ -21,8 +21,43 @@ Base.@kwdef mutable struct DFTU
     projection_type::String    = "ortho-atomic"
 end
 
+
 function DFTU(dict::JSON3.Object)
     return DFTU(;dict...)
+end
+
+function Base.:(==)(x::DFTU, y::DFTU)
+    fnames = fieldnames(DFTU)
+    for fn in fnames
+        if getfield(x, fn) != getfield(y, fn)
+            return false
+        end
+    end
+    return true
+end
+
+StructTypes.StructType(::Type{DFTU}) = StructTypes.Struct()
+
+# for backwards compatibility
+
+function DFTU(l::Int, U::T, J0::T, α::T, β::T, J::Vector{T}, projection_type::AbstractString) where {T<:Real}
+    Base.depwarn("`DFTU(l, U, J0, α, β, J)` is deprecated. Use `DFTU(l, types, manifolds, values, α, β, projection_type)` instead.", :DFTU)
+    types::Vector{String}      = []
+    manifolds::Vector{String}  = []
+    values::Vector{Float64}    = []
+    for ht in [U, J0]
+        if ht != zero(T)
+            push!(types, "U")    # TODO
+            push!(manifolds, "3d") # TODO get QE6 manifolds?
+            push!(values, ht)
+        end
+    end
+    if J != [zero(T)]
+        push!(types, "J")
+        push!(manifolds, "3d")
+        append!(values, J)
+    end
+    return DFTU(l=l, types=types, manifolds=manifolds, values=values, α=α, β=β, projection_type=projection_type)
 end
 
 function Base.getproperty(dftu::DFTU, sym::Symbol)
@@ -38,19 +73,8 @@ function Base.getproperty(dftu::DFTU, sym::Symbol)
     end
 end
 
-function Base.:(==)(x::DFTU, y::DFTU)
-    fnames = fieldnames(DFTU)
-    for fn in fnames
-        if getfield(x, fn) != getfield(y, fn)
-            return false
-        end
-    end
-    return true
-end
-
-StructTypes.StructType(::Type{DFTU}) = StructTypes.Struct()
-
 Base.convert(::Type{DFTU}, x::JLD2.ReconstructedMutable{:DFTU, (:l, :U, :J0, :α, :β, :J)}) = DFTU(x.l, x.U, x.J0, x.α, x.β, x.J, "ortho-atomic")
+Base.convert(::Type{DFTU}, x::JLD2.ReconstructedMutable{:DFTU, (:l, :U, :J0, :α, :β, :J, :projection_type)}) = DFTU(x.l, x.U, x.J0, x.α, x.β, x.J, x.projection_type)
 
 """
     Element(symbol::Symbol, Z::Int, name::String, atomic_weight::Float64, color::NTuple{3, Float64})

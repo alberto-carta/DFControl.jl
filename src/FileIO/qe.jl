@@ -646,7 +646,9 @@ function qe_parse_pw_output(str;
         cell_data = InputData(:cell_parameters, :alat, out[:cell_parameters])
         atoms_data = InputData(:atomic_positions, out[:pos_option], out[:atomic_positions])
         #TODO: Hubbard
-        tmp_flags[:Hubbard_values] = out[:Hubbard_values]
+        if haskey(out, :Hubbard_values)
+            tmp_flags[:Hubbard_values] = out[:Hubbard_values]
+        end
         out[:final_structure] = extract_structure!(tmp_flags, cell_data,
                                                    out[:atsyms], atoms_data, pseudo_data, nothing)
         # Add starting mag and DFTU
@@ -1474,11 +1476,12 @@ function qe_parse_calculation(file)
 
             # go through Hubbard card
             dftus = Dict{Symbol, DFTU}()
-            for k in i_hubbard+1:nextcard(i_hubbard)-1
+            for k in i_hubbard+1:nextcard(i_hubbard)-2
                 push!(used_lineids, k)
                 isempty(lines[k]) && continue
                 hubline = split(lines[k])
                 hubtype = hubline[1]
+                @info hubline
                 val = parse(Float64, hubline[end])
                 manifolds = hubline[2:end-1]
                 atsym = Symbol(split(manifolds[1], "-")[1])
@@ -1497,6 +1500,7 @@ function qe_parse_calculation(file)
                 end
             end
 
+            # TODO Hubbard blocks are missing
             structure = extract_structure!(sysflags, (option = cell_option, data=cell), atsyms,
                                        (option = atoms_option, data=atoms), (data=pseudos,), dftus)
                 
@@ -1569,10 +1573,11 @@ function qe_handle_hubbard_flags!(c::Calculation{QE}, str::Structure)
     u_ats = unique(str.atoms)
     isnc = Structures.isnoncolin(str)
     flags_to_set = []
-    if any(x -> x.dftu.U != 0 ||
+    ishubbard = any(x -> x.dftu.U != 0 ||
                     x.dftu.J0 != 0.0 ||
                     sum(x.dftu.J) != 0 ||
                     sum(x.dftu.α) != 0, u_ats)
+    if ishubbard
         Jmap = map(x -> copy(x.dftu.J), u_ats)
         Jdim = maximum(length.(Jmap))
         Jarr = zeros(Jdim, length(u_ats))
@@ -1607,24 +1612,27 @@ function qe_handle_hubbard_flags!(c::Calculation{QE}, str::Structure)
             pop!(c, f, nothing)
         end
     end
+    return ishubbard, isnc
 end
 
-# TODO
+# TODO nc case is not handled for QE7.2!
 function qe_handle_hubbard_flags!(c::Calculation{QE7_2}, str::Structure)
+    @info ">>>" c.flags[:system]
     u_ats = unique(str.atoms)
+    ishubbard = any(a-> !isempty(a.dftu.types), u_ats)
     isnc = Structures.isnoncolin(str)
-    if any(a-> !isempty(a.dftu.types), u_ats)
-        set_flags!(c, :lda_plus_u => true; print = false)
-        if isnc
-            set_flags!(c, :lda_plus_u_kind => 1; print = false)
-        end
-    else
-        for f in
-            (:lda_plus_u, :lda_plus_u_kind, :Hubbard_U, :Hubbard_alpha, :Hubbard_beta,
-             :Hubbard_J, :Hubbard_J0, :U_projection_type)
-            pop!(c, f, nothing)
-        end
+        # set_flags!(c, :lda_plus_u => true; print = false)
+        # if isnc
+        #     set_flags!(c, :lda_plus_u_kind => 1; print = false)
+        # end
+    # needs to be poped anyway, as they are handled in write_structure
+    for f in
+        (:lda_plus_u, :lda_plus_u_kind, :Hubbard_U,
+         # :Hubbard_alpha, :Hubbard_beta,
+         :Hubbard_J, :Hubbard_J0, :U_projection_type)
+        pop!(c, f, nothing)
     end
+    return ishubbard, isnc
 end
 
 function qe_handle_magnetism_flags!(c::Calculation, str::Structure)
@@ -1636,7 +1644,7 @@ function qe_handle_magnetism_flags!(c::Calculation, str::Structure)
     starts = Float64[]
     θs = Float64[]
     ϕs = Float64[]
-    # spin polarization if 1) nonclinear 2) starting_magnetization != 0 3) tot_magnetization
+    # spin polarization if 1) nonclinear 2) starting_magnetization != 0 3) tot_magnetization set
     ismagcalc = isnc ? true : (Structures.ismagnetic(str) || haskey(c, :tot_magnetization))
     if ismagcalc
         # noncolinear
@@ -1692,7 +1700,7 @@ function Base.write(f::IO, calculation::Calculation{T}, structure=nothing) where
         write(f, "--\n")
     end
     if Calculations.ispw(calculation) && structure !== nothing
-        qe_handle_hubbard_flags!(calculation, structure)
+        ishubbard, isnc = qe_handle_hubbard_flags!(calculation, structure)
         qe_handle_magnetism_flags!(calculation, structure)
         if Calculations.isvcrelax(calculation)
             #this is to make sure &ions and &cell are there in the calculation 
@@ -1708,6 +1716,7 @@ function Base.write(f::IO, calculation::Calculation{T}, structure=nothing) where
     
     writeflag(flag_data) = qe_writeflag(f, flag_data[1], flag_data[2])
     write_dat(data) = write_data(f, data)
+
     for name in unique([[:control, :system, :electrons, :ions, :cell]; keys(calculation.flags)...])
         if haskey(calculation.flags, name)
             flags = calculation.flags[name]
@@ -1730,7 +1739,7 @@ function Base.write(f::IO, calculation::Calculation{T}, structure=nothing) where
 
     if exec(calculation.exec) == "pw.x"
         @assert structure !== nothing "Supply a structure to write pw.x input"
-        write_structure(f, calculation, structure)
+        write_structure(f, calculation, structure, ishubbard)
     end
     for dat in calculation.data
         if dat.name != :noname
@@ -1801,10 +1810,10 @@ function write_positions_cell(f, calculation::Calculation{<:AbstractQE}, structu
     write(f, "\n\n")
 end
 
-write_structure(f, calculation::Calculation{QE}, structure) = write_positions_cell(f, calculation, structure)
-function write_structure(f, calculation::Calculation{QE7_2}, structure)
+write_structure(f, calculation::Calculation{QE}, structure, ishubbard) = write_positions_cell(f, calculation, structure)
+function write_structure(f, calculation::Calculation{QE7_2}, structure, ishubbard)
     write_positions_cell(f, calculation, structure)
-    if haskey(calculation, :lda_plus_u)
+    if ishubbard
         unique_at = unique(structure.atoms)
         u_proj = unique(map(x->x.dftu.projection_type, filter(y -> !isempty(y.dftu.types), unique_at)))
         if length(u_proj) > 1
@@ -1817,7 +1826,7 @@ function write_structure(f, calculation::Calculation{QE7_2}, structure)
             # TODO: to fix
             for (i, t) in enumerate(at.dftu.types)
                 if t == "U"
-                    write(f, "  $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.values[i])\n")
+                    write(f, "U  $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.values[i])\n")
                 elseif t == "J"
                     write(f, "  $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.values[i])\n")
                 elseif t == "J0"
