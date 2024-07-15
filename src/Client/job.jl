@@ -350,7 +350,7 @@ end
 
     
 """
-    outputdata(job::Job; server = job.server, calcs::Vector{String}=String[])
+    outputdata(job::Job; calcs::Vector{String}=String[])
     
 Finds the output files for each of the calculations of a [`Job`](@ref), and groups all the parsed data into a dictionary.
 """
@@ -363,12 +363,13 @@ function outputdata(job::Job; calcs=map(x->x.name, job.calculations), extra_pars
         tdir = tempname()
         RemoteHPC.pull(job, tdir, infiles=false, calcs=calculations)
     else
-        tdir = job.dir
+        tdir = joinpath(Server(job.server), job.dir)
     end
     
     for c in calculations
         of = Calculations.outfiles(c)
         main_file = joinpath(tdir, of[1])
+        @debug "parsing $main_file from calculation $(c.name)"
         if ispath(main_file)
             extra_files = String[]
             if length(of) > 1
