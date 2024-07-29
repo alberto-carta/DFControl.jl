@@ -1,4 +1,3 @@
-# @enum HubbardType U J J0 B E2 E3 V
 const hubbard_type=Set(["U", "J", "J0", "B", "E2", "E3", "V"])
 """
     DFTU(;l ::Int = -1,
@@ -39,27 +38,22 @@ end
 StructTypes.StructType(::Type{DFTU}) = StructTypes.Struct()
 
 # for backwards compatibility
-
+# manifold information will not be recovered
 function DFTU(l::Int, U::T, J0::T, α::T, β::T, J::Vector{T}, projection_type::AbstractString) where {T<:Real}
     Base.depwarn("`DFTU(l, U, J0, α, β, J)` is deprecated. Use `DFTU(l, types, manifolds, values, α, β, projection_type)` instead.", :DFTU)
     types::Vector{String}      = []
     manifolds::Vector{String}  = []
     values::Vector{Float64}    = []
-    for ht in [U, J0]
-        if ht != zero(T)
-            push!(types, "U")    # TODO
-            push!(manifolds, "3d") # TODO get QE6 manifolds?
-            push!(values, ht)
-        end
-    end
-    if J != [zero(T)]
-        push!(types, "J")
-        push!(manifolds, "3d")
-        append!(values, J)
+    hub_types = ["U", "J", "J0"]
+    for (h, t) in zip([U, J0, J], hub_types)
+        push!(types, t)
+        push!(manifolds, "")
+        push!(values, h)
     end
     return DFTU(l=l, types=types, manifolds=manifolds, values=values, α=α, β=β, projection_type=projection_type)
 end
 
+# to support old syntax a.dftu.U
 function Base.getproperty(dftu::DFTU, sym::Symbol)
     if String(sym) ∈ hubbard_type
         id = findfirst(x -> x == String(sym), dftu.types)

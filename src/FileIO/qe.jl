@@ -250,6 +250,11 @@ function qe_parse_total_energy(out, line, f)
     end
 end
 
+function qe_parse_constraint_energy(out, line, f)
+    e = parse(Float64, split(line)[end-1])
+    push!(out, :constraint_energy, e)
+end
+
 function parse_k_line(line)
     line = replace(replace(line, ")" => " "), "(" => " ")
     splt = split(line)
@@ -516,6 +521,9 @@ function qe_parse_Hubbard_energy(out, line, f)
     end
 end
 
+"""
+    parsing Hubbard values from output
+"""
 function qe_parse_Hubbard_values(out, line, f)
     # to properly parse this block, need to understand how the supercell is
     # constructed in qe to match atom id with atom labels
@@ -535,52 +543,54 @@ function qe_parse_Hubbard_values(out, line, f)
     out[:Hubbard_values] = hubbard_values
 end
         
-
-const QE_PW_PARSE_FUNCTIONS::Vector{Pair{NeedleType, Any}}  = ["C/m^2" => qe_parse_polarization,
-                               "lattice parameter" => qe_parse_lattice_parameter,
-                               "number of Kohn-Sham states" => qe_parse_n_KS,
-                               "number of electrons" => qe_parse_n_electrons,
-                               "crystal axes" => qe_parse_crystal_axes,
-                               "EXX-fraction" => (x, y, z) -> x[:hybrid] = true,
-                               "EXX self-consistency reached" => (x,y,z) -> x[:hybrid_converged] = true,
-                               "reciprocal axes" => qe_parse_reciprocal_axes,
-                               "atomic species   valence    mass" => qe_parse_atomic_species,
-                               "number of atoms/cell" => qe_parse_nat,
-                               "Crystallographic axes" => qe_parse_crystal_positions,
-                               "Cartesian axes" => qe_parse_cart_positions,
-                               "PseudoPot" => qe_parse_pseudo,
-                               "the Fermi energy is" => qe_parse_fermi,
-                               "highest occupied" => qe_parse_highest_lowest,
-                               "total energy  " => qe_parse_total_energy,
-                               "SPIN UP" => (x, y, z) -> x[:colincalc] = true,
-                               "cryst." => qe_parse_k_cryst, "cart." => qe_parse_k_cart,
-                               "bands (ev)" => qe_parse_k_eigvals,
-                               "End of self-consistent" => (x, y, z) -> haskey(x,
-                                                                               :k_eigvals) &&
-                                   empty!(x[:k_eigvals]),
-                               "End of band structure" => (x, y, z) -> haskey(x,
-                                                                              :k_eigvals) &&
-                                   empty!(x[:k_eigvals]),
-                               "CELL_PARAMETERS (" => qe_parse_cell_parameters,
-                               "ATOMIC_POSITIONS (" => qe_parse_atomic_positions,
-                               "Total force" => qe_parse_total_force,
-                               "Forces acting on atoms" => qe_parse_atomic_force,
-                               "iteration #" => qe_parse_scf_iteration,
-                               "Magnetic moment per site" => qe_parse_colin_magmoms,
-                               "estimated scf accuracy" => qe_parse_scf_accuracy,
-                               "total magnetization" => qe_parse_total_magnetization,
-                               "convergence has been" => (x, y, z) -> x[:scf_converged] = true,
-                               "Begin final coordinates" => (x, y, z) -> x[:converged] = true,
-                               "atom number" => qe_parse_magnetization,
-                               "--- enter write_ns ---" => qe_parse_Hubbard,
-                               "HUBBARD OCCUPATIONS" => qe_parse_Hubbard,
-                               "Hubbard energy" => qe_parse_Hubbard_energy,
-                               "HUBBARD ENERGY" => qe_parse_Hubbard_energy,
-                               "stan-stan stan-bac" => qe_parse_Hubbard_values,
-                               "init_run" => qe_parse_timing,
-                               "Starting magnetic structure" => qe_parse_starting_magnetization,
-                               "Simplified LDA+U calculation" => qe_parse_starting_simplified_dftu,
-                               "JOB DONE." => (x, y, z) -> x[:finished] = true]
+const QE_PW_PARSE_FUNCTIONS::Vector{Pair{NeedleType, Any}}  = [
+    "C/m^2" => qe_parse_polarization,
+    "lattice parameter" => qe_parse_lattice_parameter,
+    "number of Kohn-Sham states" => qe_parse_n_KS,
+    "number of electrons" => qe_parse_n_electrons,
+    "crystal axes" => qe_parse_crystal_axes,
+    "EXX-fraction" => (x, y, z) -> x[:hybrid] = true,
+    "EXX self-consistency reached" => (x,y,z) -> x[:hybrid_converged] = true,
+    "reciprocal axes" => qe_parse_reciprocal_axes,
+    "atomic species   valence    mass" => qe_parse_atomic_species,
+    "number of atoms/cell" => qe_parse_nat,
+    "Crystallographic axes" => qe_parse_crystal_positions,
+    "Cartesian axes" => qe_parse_cart_positions,
+    "PseudoPot" => qe_parse_pseudo,
+    "the Fermi energy is" => qe_parse_fermi,
+    "highest occupied" => qe_parse_highest_lowest,
+    "total energy  " => qe_parse_total_energy,
+    "SPIN UP" => (x, y, z) -> x[:colincalc] = true,
+    "cryst." => qe_parse_k_cryst, "cart." => qe_parse_k_cart,
+    "bands (ev)" => qe_parse_k_eigvals,
+    "End of self-consistent" => (x, y, z) -> haskey(x,
+                                                   :k_eigvals) &&
+       empty!(x[:k_eigvals]),
+    "End of band structure" => (x, y, z) -> haskey(x,
+                                                  :k_eigvals) &&
+       empty!(x[:k_eigvals]),
+    "CELL_PARAMETERS (" => qe_parse_cell_parameters,
+    "ATOMIC_POSITIONS (" => qe_parse_atomic_positions,
+    "Total force" => qe_parse_total_force,
+    "Forces acting on atoms" => qe_parse_atomic_force,
+    "iteration #" => qe_parse_scf_iteration,
+    "Magnetic moment per site" => qe_parse_colin_magmoms,
+    "estimated scf accuracy" => qe_parse_scf_accuracy,
+    "total magnetization" => qe_parse_total_magnetization,
+    "convergence has been" => (x, y, z) -> x[:scf_converged] = true,
+    "Begin final coordinates" => (x, y, z) -> x[:converged] = true,
+    "atom number" => qe_parse_magnetization,
+    "--- enter write_ns ---" => qe_parse_Hubbard,
+    "HUBBARD OCCUPATIONS" => qe_parse_Hubbard,
+    "Hubbard energy" => qe_parse_Hubbard_energy,
+    "HUBBARD ENERGY" => qe_parse_Hubbard_energy,
+    "stan-stan stan-bac" => qe_parse_Hubbard_values,
+    "init_run" => qe_parse_timing,
+    "Starting magnetic structure" => qe_parse_starting_magnetization,
+    "Simplified LDA+U calculation" => qe_parse_starting_simplified_dftu,
+    "JOB DONE." => (x, y, z) -> x[:finished] = true,
+    "CONSTRAINTS ENERGY" => qe_parse_constraint_energy,
+]
 
 """
     qe_parse_pw_output(str::String; parse_funcs::Vector{Pair{String}}=Pair{String,<:Function}[])
@@ -838,6 +848,7 @@ function qe_md_parse_finish(out, line, f)
     # delete temperary value
     delete!(out, :scf_iteration)
 end
+
 
 function qe_md_parse_total_energy(out, line, f)
     sline = split(line)
@@ -1165,6 +1176,7 @@ function qe_parse_pert_at(out, line, f)
     end
 end
 
+
 function qe_parse_Hubbard_U(out, line, f)
     out[:Hubbard_U] = []
     readline(f)
@@ -1202,48 +1214,48 @@ end
 
 function alat(flags, pop = false)
     if haskey(flags, :A)
-        alat = pop ? pop!(flags, :A) : flags[:A]
-        alat *= 1Ang
+        a = pop ? pop!(flags, :A) : flags[:A]
+        a *= 1Ang
     elseif haskey(flags, :celldm_1)
-        alat = pop ? pop!(flags, :celldm_1) : flags[:celldm_1]
-        alat *= 1bohr
+        a = pop ? pop!(flags, :celldm_1) : flags[:celldm_1]
+        a *= 1bohr
     elseif haskey(flags, :celldm)
-        alat = pop ? pop!(flags, :celldm)[1] : flags[:celldm][1]
-        alat *= 1bohr
+        a = pop ? pop!(flags, :celldm)[1] : flags[:celldm][1]
+        a *= 1bohr
     else
         error("Cell option 'alat' was found, but no matching flag was set. \n
-               The 'alat' has to  be specified through 'A' or 'celldm(1)'.")
+        The 'alat' has to  be specified through 'A' or 'celldm(1)'.")
     end
-    return alat
+    return a
 end
 
 #TODO handle more fancy cells
 function extract_cell!(flags, cell_block)
-    if cell_block != nothing
-        _alat = 1.0Ang
-        if cell_block.option == :alat
-            _alat = alat(flags)
-
-        elseif cell_block.option == :bohr
-            _alat = 1bohr
-        end
-
-        return (_alat .* cell_block.data)'
+    @assert cell_block !== nothing
+    a = 1.0*Ang
+    if cell_block.option == :alat
+        a = alat(flags)
+    elseif cell_block.option == :bohr
+        a = 1*bohr
     end
+    return (a .* cell_block.data)'
 end
 
+"""
+    parsing Hubbard U parameters prior to qe7.2 from qe input.
+    To fully use Hubbard correction, use qe7.2 onwards where the input
+    takes a dedicated Hubbard block.
+"""
 function qe_DFTU(speciesid::Int, atsyms::AbstractVector{Symbol}, parsed_flags::Dict{Symbol,Any},)
-    if haskey(parsed_flags, :Hubbard_values)
-        @debug parsed_flags[:Hubbard_values]
-        if haskey(parsed_flags[:Hubbard_values], speciesid)
-            hub = parsed_flags[:Hubbard_values][speciesid]
-        else
-            return DFTU()
-        end
-        # TODO hardcoded for 3d
-        # can we get manifolds from output?
-        manifolds = String(atsyms[speciesid]) * "-3d"
-        return DFTU(; types=[hub[1]], values=[hub[2]], manifolds=[manifolds])
+    @warn "Parsing Hubbard U parameters using old syntax (prior to qe7.2)."
+    if haskey(parsed_flags, :Hubbard_U) && !iszero(parsed_flags[:Hubbard_U][speciesid])
+        @debug "Hubbard U for atom $speciesid: $(parsed_flags[:Hubbard_U][speciesid])"
+        # TODO hardcoded according to default setting before qe7.2,
+        # User can potential change manifolds by modifying source code.
+        # Input file genereated from this will be correct since it is not used.
+        el = atsyms[speciesid]
+        manifold = String(el) * "-" * ELEMENT_TO_N[el] * ELEMENT_TO_L[el]
+        return DFTU(; types=["U"], values=[parsed_flags[:Hubbard_U][speciesid]], manifolds=[manifold])
     else
         return DFTU()
     end
@@ -1295,7 +1307,8 @@ function extract_atoms!(parsed_flags, atsyms, atom_block, pseudo_block, hubbard_
         push!(atoms,
               Atom(; name = atsym, element = Structures.element(atsym),
                    position_cart = primv * pos,
-                   position_cryst = UnitfulAtomic.ustrip.(inv(cell) * pos), pseudo = pseudo,
+                   position_cryst = UnitfulAtomic.ustrip.(inv(cell) * pos),
+                   pseudo = pseudo,
                    magnetization = qe_magnetization(speciesid, parsed_flags),
                    dftu = hubbard_block === nothing ? qe_DFTU(speciesid, atsyms, parsed_flags) : hubbard_block[atsym]))
     end
