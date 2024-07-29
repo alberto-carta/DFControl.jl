@@ -209,12 +209,15 @@ end
     getindex(structure::Structure, i::Int)
     getindex(structure::Structure, name::Symbol)
     getindex(structure::Structure, el::Element)
+    lastindex(structure::Structure)
 
-Returns the `i`th atom in `structure`, or all atoms with `name` or are of element `el`.
+Returns the `i`th atom in `structure`, or filter atoms with `name` or of element `el`.
+Returns the last atom in structure with `s`tructure[end]`.
 """
 Base.getindex(str::Structure, args...) = str.atoms[args...]
 Base.getindex(str::Structure, el::Symbol) = filter(x -> x.name == el, str.atoms)
 Base.getindex(str::Structure, el::Element) = filter(x -> x.element == el, str.atoms)
+Base.lastindex(str::Structure) = lastindex(str.atoms)
 ismagnetic(str::Structure) = any(x -> norm(x.magnetization) > 0, str.atoms)
 
 ## Magnetism ##
