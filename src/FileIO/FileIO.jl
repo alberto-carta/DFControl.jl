@@ -8,19 +8,22 @@ using ..Utils
 using ..Calculations
 using ..Calculations: Calculation
 using ..Structures
-using ..Structures: Pseudo
+using ..Structures: Pseudo 
 using ..Jobs
 using ..DFControl: Point,Point3, Vec3, SVector, Mat3, Mat4, Band, TimingData
+
+const NeedleType = Union{AbstractString, AbstractChar, Regex}
 
 include("qe.jl")
 include("wannier.jl")
 include("julia.jl")
 
-function parse_file(f::IO, parse_funcs::Vector{<:Pair{String}};out = Dict{Symbol,Any}(),
+function parse_file(f::IO, parse_funcs::Vector{<:Pair{NeedleType, Any}};
+                    out = Dict{Symbol,Any}(),
                     extra_parse_funcs::Vector{<:Pair} = Pair{String,Function}[])
     
     lc = 0
-    while !eof(f) && !haskey(out, :finished)
+    while !eof(f)
         line = strip(readline(f))
         lc += 1
         if isempty(line)

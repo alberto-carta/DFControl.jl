@@ -36,7 +36,7 @@ include("projections.jl")
 include("atom.jl")
 include("structure.jl")
 
-export Projection, Atom, Element, Structure, DFTU
+export Projection, Atom, Element, Structure, DFTU 
 export angstrom, Ang
 
 end

@@ -1,3 +1,4 @@
+const hubbard_type=Set(["U", "J", "J0", "B", "E2", "E3", "V"])
 """
     DFTU(;l ::Int = -1,
           U ::T   = zero(T),
@@ -9,15 +10,17 @@
 DFT+U parameters for a given [`Atom`](@ref).
 """
 Base.@kwdef mutable struct DFTU
-    l::Int      = -1
-    U::Float64  = 0.0
-    J0::Float64 = 0.0
-    #QE params
-    α::Float64 = 0.0
-    β::Float64 = 0.0
-    J::Vector{Float64} = [0.0]
-    projection_type::String = "ortho-atomic"
+    l::Int                     = -1
+    types::Vector{String}      = [] # U J J0 B E2 E3 V
+    manifolds::Vector{String}  = [] # for V, it includes both manifolds
+    values::Vector{Float64}    = []
+    #QE hubbard settings
+    α::Float64                 = 0.0
+    β::Float64                 = 0.0
+    projection_type::String    = "ortho-atomic"
 end
+
+
 function DFTU(dict::JSON3.Object)
     return DFTU(;dict...)
 end
@@ -34,7 +37,38 @@ end
 
 StructTypes.StructType(::Type{DFTU}) = StructTypes.Struct()
 
+# for backwards compatibility
+# manifold information will not be recovered
+function DFTU(l::Int, U::T, J0::T, α::T, β::T, J::Vector{T}, projection_type::AbstractString) where {T<:Real}
+    Base.depwarn("`DFTU(l, U, J0, α, β, J)` is deprecated. Use `DFTU(l, types, manifolds, values, α, β, projection_type)` instead.", :DFTU)
+    types::Vector{String}      = []
+    manifolds::Vector{String}  = []
+    values::Vector{Float64}    = []
+    hub_types = ["U", "J", "J0"]
+    for (h, t) in zip([U, J0, J], hub_types)
+        push!(types, t)
+        push!(manifolds, "")
+        push!(values, h)
+    end
+    return DFTU(l=l, types=types, manifolds=manifolds, values=values, α=α, β=β, projection_type=projection_type)
+end
+
+# to support old syntax a.dftu.U
+function Base.getproperty(dftu::DFTU, sym::Symbol)
+    if String(sym) ∈ hubbard_type
+        id = findfirst(x -> x == String(sym), dftu.types)
+        if id === nothing
+            return 0.0
+        else
+            return dftu.values[id]
+        end
+    else
+        return getfield(dftu, sym)
+    end
+end
+
 Base.convert(::Type{DFTU}, x::JLD2.ReconstructedMutable{:DFTU, (:l, :U, :J0, :α, :β, :J)}) = DFTU(x.l, x.U, x.J0, x.α, x.β, x.J, "ortho-atomic")
+Base.convert(::Type{DFTU}, x::JLD2.ReconstructedMutable{:DFTU, (:l, :U, :J0, :α, :β, :J, :projection_type)}) = DFTU(x.l, x.U, x.J0, x.α, x.β, x.J, x.projection_type)
 
 """
     Element(symbol::Symbol, Z::Int, name::String, atomic_weight::Float64, color::NTuple{3, Float64})

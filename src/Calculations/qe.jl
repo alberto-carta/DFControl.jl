@@ -241,11 +241,12 @@ isnscf(c::Calculation{<:AbstractQE})    = get(c, :calculation, nothing) == "nscf
 isscf(c::Calculation{<:AbstractQE})     = get(c, :calculation, nothing) == "scf"
 isvcrelax(c::Calculation{<:AbstractQE}) = get(c, :calculation, nothing) == "vc-relax"
 isrelax(c::Calculation{<:AbstractQE})   = get(c, :calculation, nothing) == "relax"
+ismd(c::Calculation{<:AbstractQE})      = get(c, :calculation, nothing) == "md"
 isprojwfc(c::Calculation{<:AbstractQE}) = exec(c.exec) == "projwfc.x"
 ishp(c::Calculation{<:AbstractQE})      = exec(c.exec) == "hp.x"
 
 function ispw(c::Calculation{<:AbstractQE})
-    return isbands(c) || isnscf(c) || isscf(c) || isvcrelax(c) || isrelax(c)
+    return isbands(c) || isnscf(c) || isscf(c) || isvcrelax(c) || isrelax(c) || ismd(c)
 end
 
 issoc(c::Calculation{<:AbstractQE}) = get(c, :lspinorb, false)
