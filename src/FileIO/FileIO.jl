@@ -48,17 +48,6 @@ function parse_file(f::AbstractString, args...; kwargs...)
     end
 end
 
-function cif2structure(cif_file::String; structure_name = "NoName")
-    tmpdir = dirname(cif_file)
-    tmpfile = joinpath(tmpdir, "tmp.in")
-    @assert splitext(cif_file)[2] == ".cif" error("Please specify a valid cif calculation file")
-    run(`$pythonpath $cif2cellpath $cif_file --no-reduce -p quantum-espresso -o $tmpfile`)
-
-    bla, structure = qe_parse_calculation(tmpfile; structure_name = structure_name)
-    rm(tmpfile)
-    return structure
-end
-
 Base.length(::Type{<:Real}) = 1
 
 function Base.parse(::Type{NamedTuple{names,types}},

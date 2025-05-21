@@ -1,15 +1,9 @@
 module DFControl
+using CondaPkg
 const DFC = DFControl
 export DFC
 
 const DEPS_DIR = joinpath(dirname(@__DIR__), "deps")
-
-const PYTHONPATH = Sys.iswindows() ? joinpath(DEPS_DIR, "python2", "python") :
-                   joinpath(dirname(@__DIR__), "deps", "python2", "bin", "python")
-
-const CIF2CELLPATH = Sys.iswindows() ?
-                     joinpath(DEPS_DIR, "python2", "Scripts", "cif2cell") :
-                     joinpath(dirname(@__DIR__), "deps", "python2", "bin", "cif2cell")
 
 using LinearAlgebra
 using Reexport

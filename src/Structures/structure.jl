@@ -31,7 +31,10 @@ function cif2structure(cif_file::String)
     tmpfile = tempname()
     @assert splitext(cif_file)[2] == ".cif" error("Please specify a valid cif calculation file")
     if Sys.which("cif2cell") === nothing 
-        run(`$(DFControl.PYTHONPATH) $(DFControl.CIF2CELLPATH) $cif_file --no-reduce -p quantum-espresso -o $tmpfile`)
+        CondaPkg.withenv() do
+            cif2cell = CondaPkg.which("cif2cell")
+            run(`$cif2cell $cif_file --no-reduce -p quantum-espresso -o $tmpfile`)
+        end
     else
         run(`cif2cell $cif_file --no-reduce -p quantum-espresso -o $tmpfile`)
     end
