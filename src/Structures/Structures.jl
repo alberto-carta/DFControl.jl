@@ -3,6 +3,7 @@ module Structures
 using ..DFControl
 using ..Utils
 using LinearAlgebra, StructTypes, Parameters, StaticArrays, JSON3
+using CondaPkg
 using spglib_jll
 using JLD2
 const SPGLIB = spglib_jll.libsymspg

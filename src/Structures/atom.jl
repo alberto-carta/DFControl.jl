@@ -1,28 +1,33 @@
-const hubbard_type=Set(["U", "J", "J0", "B", "E2", "E3", "V"])
+const hubbard_type = Set(["U", "J", "J0", "B", "E2", "E3", "V"])
 """
     DFTU(;l ::Int = -1,
-          U ::T   = zero(T),
-          J0::T  = zero(T),
-          α ::T   = zero(T),
-          β ::T   = zero(T),
-          J ::Vector{T} = T[zero(T)])
+          types::Vector{String},
+          manifolds::Vector{String},
+          values::Vector{Float64},
+          α ::Float64   = 0.0,
+          β ::Float64   = 0.0,
+          projection_type::String = "ortho-atomic",
 
-DFT+U parameters for a given [`Atom`](@ref).
+Hubbard parameters for a given [`Atom`](@ref). `types` should be one of the: 
+`["U", "J", "J0", "B", "E2", "E3", "V"]`, and `manifolds` should be the
+corresponding manifolds for the Hubbard parameters. The order of the two vectors
+should be the same. The `values` vector should contain the values of the
+Hubbard parameters in the same order as `types`.
+The `α` and `β` parameters are used for the DFT+U method.
 """
 Base.@kwdef mutable struct DFTU
-    l::Int                     = -1
-    types::Vector{String}      = [] # U J J0 B E2 E3 V
-    manifolds::Vector{String}  = [] # for V, it includes both manifolds
-    values::Vector{Float64}    = []
+    l::Int                    = -1
+    types::Vector{String}     = String[] # U J J0 B E2 E3 V
+    manifolds::Vector{String} = String[] # for V, it includes both manifolds
+    values::Vector{Float64}   = Float64[]
     #QE hubbard settings
-    α::Float64                 = 0.0
-    β::Float64                 = 0.0
-    projection_type::String    = "ortho-atomic"
+    α::Float64 = zero(Float64)
+    β::Float64 = zero(Float64)
+    projection_type::String = "ortho-atomic"
 end
 
-
 function DFTU(dict::JSON3.Object)
-    return DFTU(;dict...)
+    return DFTU(; dict...)
 end
 
 function Base.:(==)(x::DFTU, y::DFTU)
@@ -39,21 +44,24 @@ StructTypes.StructType(::Type{DFTU}) = StructTypes.Struct()
 
 # for backwards compatibility
 # manifold information will not be recovered
-function DFTU(l::Int, U::T, J0::T, α::T, β::T, J::Vector{T}, projection_type::AbstractString) where {T<:Real}
-    Base.depwarn("`DFTU(l, U, J0, α, β, J)` is deprecated. Use `DFTU(l, types, manifolds, values, α, β, projection_type)` instead.", :DFTU)
-    types::Vector{String}      = []
-    manifolds::Vector{String}  = []
-    values::Vector{Float64}    = []
-    hub_types = ["U", "J", "J0"]
+function DFTU(l::Int, U::T, J0::T, α::T, β::T, J::Vector{T},
+              projection_type::AbstractString) where {T<:Real}
+    Base.depwarn("`DFTU(l, U, J0, α, β, J)` is deprecated. Use `DFTU(l, types, manifolds, values, α, β, projection_type)` instead.",
+                 :DFTU)
+    types::Vector{String}     = []
+    manifolds::Vector{String} = []
+    values::Vector{Float64}   = []
+    hub_types                 = ["U", "J", "J0"]
     for (h, t) in zip([U, J0, J], hub_types)
         push!(types, t)
         push!(manifolds, "")
         push!(values, h)
     end
-    return DFTU(l=l, types=types, manifolds=manifolds, values=values, α=α, β=β, projection_type=projection_type)
+    return DFTU(; l = l, types = types, manifolds = manifolds, values = values, α = α,
+                β = β, projection_type = projection_type)
 end
 
-# to support old syntax a.dftu.U
+# getter for old dftu syntax eg. a.dftu.U
 function Base.getproperty(dftu::DFTU, sym::Symbol)
     if String(sym) ∈ hubbard_type
         id = findfirst(x -> x == String(sym), dftu.types)
@@ -67,8 +75,16 @@ function Base.getproperty(dftu::DFTU, sym::Symbol)
     end
 end
 
-Base.convert(::Type{DFTU}, x::JLD2.ReconstructedMutable{:DFTU, (:l, :U, :J0, :α, :β, :J)}) = DFTU(x.l, x.U, x.J0, x.α, x.β, x.J, "ortho-atomic")
-Base.convert(::Type{DFTU}, x::JLD2.ReconstructedMutable{:DFTU, (:l, :U, :J0, :α, :β, :J, :projection_type)}) = DFTU(x.l, x.U, x.J0, x.α, x.β, x.J, x.projection_type)
+function Base.convert(::Type{DFTU},
+                      x::JLD2.ReconstructedMutable{:DFTU,(:l, :U, :J0, :α, :β, :J)})
+    return DFTU(x.l, x.U, x.J0, x.α, x.β, x.J, "ortho-atomic")
+end
+function Base.convert(::Type{DFTU},
+                      x::JLD2.ReconstructedMutable{:DFTU,
+                                                   (:l, :U, :J0, :α, :β, :J,
+                                                    :projection_type)})
+    return DFTU(x.l, x.U, x.J0, x.α, x.β, x.J, x.projection_type)
+end
 
 """
     Element(symbol::Symbol, Z::Int, name::String, atomic_weight::Float64, color::NTuple{3, Float64})
@@ -85,7 +101,8 @@ end
 Element() = Element(:nothing, -1, "", -1, (0.0, 0.0, 0.0))
 StructTypes.StructType(::Type{Element}) = StructTypes.Struct()
 function Element(dict::JSON3.Object)
-    return Element(Symbol(dict[:symbol]), dict[:Z], dict[:name], dict[:atomic_weight], ([v for v in dict[:color]]...,))
+    return Element(Symbol(dict[:symbol]), dict[:Z], dict[:name], dict[:atomic_weight],
+                   ([v for v in dict[:color]]...,))
 end
 
 """
@@ -129,13 +146,13 @@ Base.@kwdef mutable struct Pseudo
     path::String = ""
     pseudo::String = ""
 end
-Pseudo(d::Dict{Symbol, Any}) = Pseudo(; d...)
-function Pseudo(d::Dict{String, Any})
-    td = Dict{Symbol, Any}()
+Pseudo(d::Dict{Symbol,Any}) = Pseudo(; d...)
+function Pseudo(d::Dict{String,Any})
+    td = Dict{Symbol,Any}()
     for (k, v) in d
         td[Symbol(k)] = v
     end
-    Pseudo(td)
+    return Pseudo(td)
 end
 
 Base.convert(::Type{Pseudo}, d::Dict) = Pseudo(d)
@@ -144,12 +161,11 @@ Base.write(f::AbstractString, p::Pseudo, args...) = write(f, p.pseudo, args...)
 Base.write(f::IO, p::Pseudo) = write(f, p.pseudo)
 function Base.:(==)(p1::Pseudo, p2::Pseudo)
     if !(isempty(p1.path) && isempty(p2.path) && isempty(p1.server) && isempty(p2.server))
-        return p1.path == p2.path && p1.server==p2.server
+        return p1.path == p2.path && p1.server == p2.server
     else
         return p1.pseudo == p2.pseudo
     end
 end
-        
 
 # TODO Multiple l per atom in Elk??
 #We use angstrom everywhere
@@ -180,12 +196,14 @@ See documentation for [`Element`](@ref) for further information on this attribut
 end
 StructTypes.StructType(::Type{Atom}) = StructTypes.Struct()
 function Atom(dict::JSON3.Object)
-    return Atom(Symbol(dict[:name]), 1.0Ang .* Point3([t[:val] for t in dict[:position_cart]]),
-                Point3([t for t in dict[:position_cryst]]), Element(dict[:element]), dict[:pseudo],
-                [Projection(x) for x in dict[:projections]], Vec3([t for t in dict[:magnetization]]),
+    return Atom(Symbol(dict[:name]),
+                1.0Ang .* Point3([t[:val] for t in dict[:position_cart]]),
+                Point3([t for t in dict[:position_cryst]]), Element(dict[:element]),
+                dict[:pseudo],
+                [Projection(x) for x in dict[:projections]],
+                Vec3([t for t in dict[:magnetization]]),
                 DFTU(dict[:dftu]))
 end
-
 
 "Takes a Vector of atoms and returns a Vector with the atoms having unique symbols."
 function Base.unique(atoms::Vector{Atom})
@@ -223,7 +241,17 @@ function projections_string(at::Atom)
 end
 
 function Base.:(==)(at1::Atom, at2::Atom)
-    return at1.name == at2.name && norm(at1.position_cart - at2.position_cart) < 1e-6Ang && at1.dftu == at2.dftu
+    return at1.name == at2.name && norm(at1.position_cart - at2.position_cart) < 1e-6Ang &&
+           at1.dftu == at2.dftu
+end
+
+function rename!(at::Atom, name::Symbol)
+    oldname = at.name
+    at.name = name
+    for (i, m) in enumerate(at.dftu.manifolds)
+        at.dftu.manifolds[i] = replace(m, string(oldname) => string(name))
+    end
+    return at
 end
 
 """
@@ -261,21 +289,18 @@ function scale_bondlength!(at1::Atom, at2::Atom, scale::Real, cell::Mat3)
     return set_position!(at2, new_p2, cell)
 end
 
-Base.getindex(A::Matrix, a1::T , a2::T) where {T<:Union{Atom, Projection}} =
-    getindex(A, range(a1), range(a2))
+function Base.getindex(A::Matrix, a1::T, a2::T) where {T<:Union{Atom,Projection}}
+    return getindex(A, range(a1), range(a2))
+end
 
-Base.getindex(A::Matrix, a::Atom) =
-    getindex(A, a, a)
+Base.getindex(A::Matrix, a::Atom) = getindex(A, a, a)
 
-Base.getindex(A::Vector, a::Atom) =
-    getindex(A, range(a))
+Base.getindex(A::Vector, a::Atom) = getindex(A, range(a))
 
-Base.view(A::Matrix, a1::T, a2::T) where {T<:Union{Atom, Projection}} =
-    view(A, range(a1), range(a2))
+function Base.view(A::Matrix, a1::T, a2::T) where {T<:Union{Atom,Projection}}
+    return view(A, range(a1), range(a2))
+end
 
-Base.view(A::Matrix, a::Union{Atom, Projection}) =
-    view(A, range(a), range(a))
+Base.view(A::Matrix, a::Union{Atom,Projection}) = view(A, range(a), range(a))
 
-Base.view(A::Vector, a::Union{Atom, Projection}) =
-    view(A, range(a))
-
+Base.view(A::Vector, a::Union{Atom,Projection}) = view(A, range(a))

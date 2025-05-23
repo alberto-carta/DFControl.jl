@@ -15,7 +15,7 @@ paths = ["jobs",
          "storage/servers",
          "storage/execs",
          "storage/environments"]
-         
+
 for p in paths
     mkpath(config_path(p))
 end

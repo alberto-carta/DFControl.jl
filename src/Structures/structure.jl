@@ -12,7 +12,10 @@ mutable struct Structure
     atoms :: Vector{Atom}
 end
 Structure() = Structure(Mat3(fill(1.0Ang, 3, 3)), Atom[])
-Structure(dict::JSON3.Object) = Structure(1.0Ang .* Mat3([t[:val] for t in dict[:cell]]...), [Atom(t) for t in dict[:atoms]])
+function Structure(dict::JSON3.Object)
+    return Structure(1.0Ang .* Mat3([t[:val] for t in dict[:cell]]...),
+                     [Atom(t) for t in dict[:atoms]])
+end
 
 function Structure(cif_file::String)
     str = cif2structure(cif_file)
@@ -30,10 +33,10 @@ end
 function cif2structure(cif_file::String)
     tmpfile = tempname()
     @assert splitext(cif_file)[2] == ".cif" error("Please specify a valid cif calculation file")
-    if Sys.which("cif2cell") === nothing 
+    if Sys.which("cif2cell") === nothing
         CondaPkg.withenv() do
             cif2cell = CondaPkg.which("cif2cell")
-            run(`$cif2cell $cif_file --no-reduce -p quantum-espresso -o $tmpfile`)
+            return run(`$cif2cell $cif_file --no-reduce -p quantum-espresso -o $tmpfile`)
         end
     else
         run(`cif2cell $cif_file --no-reduce -p quantum-espresso -o $tmpfile`)
@@ -54,7 +57,6 @@ function name(str::Structure)
     end
     return n
 end
-    
 
 # TODO extend base.merge
 "Takes a vector of structures and merges all the attributes of the atoms."
@@ -65,7 +67,7 @@ function mergestructures(structures::Vector{Structure})
                       position_cryst = zero(Point3{Float64}))
     for structure in nonvoid[2:end]
         for at1 in out.atoms, at2 in structure.atoms
-            if isapprox(at1.position_cryst, at2.position_cryst, atol=1e-5)
+            if isapprox(at1.position_cryst, at2.position_cryst; atol = 1e-5)
                 for fname in fieldnames(typeof(at1))
                     if fname in [:name, :element, :position_cart, :position_cryst]
                         continue
@@ -91,11 +93,11 @@ function update_geometry!(str1::Structure, str2::Structure)
     ats2 = str2.atoms
     for at1 in str1.atoms
         id = findmin(map(x -> norm(x.position_cart - at1.position_cart), ats2))[2]
-        
+
         if id === nothing
             @error "No atom of the species $(at1.name) found in the second structure"
         end
-        
+
         set_position!(at1, ats2[id].position_cryst, str1.cell)
         at1.name = ats2[id].name
     end
@@ -188,13 +190,19 @@ function create_supercell(structure::Structure, na::UnitRange, nb::UnitRange, nc
             if make_afm && norm(at.magnetization) != 0
                 new_magnetization = factor * at.magnetization
                 push!(new_atoms,
-                      Atom(at; projections = deepcopy(at.projections),
-                           magnetization = new_magnetization, position_cart = cart_pos,
+                      Atom(at;
+                           projections = deepcopy(at.projections),
+                           dftu = deepcopy(at.dftu),
+                           magnetization = new_magnetization,
+                           position_cart = cart_pos,
                            position_cryst = Point3(cryst_pos)))
             else
                 push!(new_atoms,
-                      Atom(at; projections = deepcopy(at.projections),
-                           position_cart = cart_pos, position_cryst = Point3(cryst_pos)))
+                      Atom(at;
+                           projections = deepcopy(at.projections),
+                           dftu = deepcopy(at.dftu),
+                           position_cart = cart_pos,
+                           position_cryst = Point3(cryst_pos)))
             end
         end
     end
@@ -236,7 +244,8 @@ function isnoncolin(str::Structure)
 end
 
 function sanitize!(str::Structure)
-    magnetic_ats = filter(a -> norm(a.magnetization) != 0 || !isempty(a.dftu.values), str.atoms)
+    magnetic_ats = filter(a -> norm(a.magnetization) != 0 || !isempty(a.dftu.values),
+                          str.atoms)
     magnetic_elements = map(x -> x.element, magnetic_ats)
     for e in magnetic_elements
         magnetizations = Vec3[]
@@ -266,11 +275,11 @@ function sanitize!(str::Structure)
                         push!(magnetizations, a.magnetization)
                         push!(dftus, a.dftu)
                         oldname = a.name
-                        a.name = tname
+                        rename!(a, tname)
                         @info "Renamed atom from $oldname to $(a.name) in order to distinguish different magnetization species."
                     else
                         oldname = a.name
-                        a.name = names[id]
+                        rename!(a, names[id])
                         @info "Renamed atom from $oldname to $(a.name) in order to distinguish different magnetization species."
                     end
                 end
@@ -295,14 +304,14 @@ function polyhedron(at::Atom, str::Structure, order::Int)
     return polyhedron(at, create_supercell(str, -1:1, -1:1, -1:1).atoms, order)
 end
 
-function set_pseudos!(structure::Structure, pseudos::Dict, fuzzy="")
+function set_pseudos!(structure::Structure, pseudos::Dict, fuzzy = "")
     for at in structure.atoms
         pseudo = get(pseudos, at.element.symbol, nothing)
         if pseudo === nothing || isempty(pseudo)
             @warn "Pseudo for $(at.name) not found."
         else
             if length(pseudo) > 1
-                id = findfirst(x->occursin(fuzzy, x.path), pseudo)
+                id = findfirst(x -> occursin(fuzzy, x.path), pseudo)
                 if id === nothing
                     at.pseudo = pseudo[1]
                 else
@@ -422,19 +431,21 @@ function find_primitive(s::Structure; kwargs...)
     return Structure(new_cell, newats)
 end
 
-function standardize_cell!(s::SPGStructure; tolerance = DEFAULT_TOLERANCE, to_primitive=false, no_idealize=false)
+function standardize_cell!(s::SPGStructure; tolerance = DEFAULT_TOLERANCE,
+                           to_primitive = false, no_idealize = false)
     nat = length(s.species_indices)
     if !to_primitive
-        t_positions = [s.positions  zeros(Float64, 3, 3*nat)]
-        t_species_indices = [s.species_indices;  zeros(Int, 3*nat)]
+        t_positions = [s.positions zeros(Float64, 3, 3 * nat)]
+        t_species_indices = [s.species_indices; zeros(Int, 3 * nat)]
     else
         t_positions       = s.positions
         t_species_indices = s.species_indices
     end
     # @show t_species_indices
     numat = ccall((:spg_standardize_cell, SPGLIB), Cint,
-                   (Ptr{Cdouble}, Ptr{Cdouble}, Ptr{Cint}, Cint, Cint, Cint, Cdouble),
-                   s.lattice, t_positions, t_species_indices, nat, to_primitive, no_idealize, tolerance)
+                  (Ptr{Cdouble}, Ptr{Cdouble}, Ptr{Cint}, Cint, Cint, Cint, Cdouble),
+                  s.lattice, t_positions, t_species_indices, nat, to_primitive, no_idealize,
+                  tolerance)
     numat == 0 && error("Could not find the standardized cell of the supplied structure.")
     return SPGStructure(s.lattice, t_positions[:, 1:numat], t_species_indices[1:numat])
 end
@@ -470,7 +481,7 @@ function cell_parameters(cell::Mat3)
 end
 
 function crystal_kind(s::Structure; tolerance = DEFAULT_TOLERANCE)
-    n, sym = international(s; tolerance=tolerance)
+    n, sym = international(s; tolerance = tolerance)
     f = (i, j) -> i <= n <= j
     cs = [:triclinic => (1, 2), :monoclinic => (3, 15), :orthorhombic => (16, 74),
           :tetragonal => (75, 142), :trigonal => (143, 167), :hexagonal => (168, 194),
@@ -524,10 +535,11 @@ end
 Returns `(kpoints, path)` where `kpoints` are the high-symmetry k-points,
 and `path` are the sections of the high symmetry path through the first Brillouin Zone.
 """
-function high_symmetry_kpoints(s::Structure; tolerance = DEFAULT_TOLERANCE, lower_tolerance=true, kwargs...)
-    primitive = find_primitive(s; tolerance=tolerance)
-    n, sym    = international(primitive; tolerance=tolerance)
-    kind      = lattice_kind(primitive; tolerance=tolerance)
+function high_symmetry_kpoints(s::Structure; tolerance = DEFAULT_TOLERANCE,
+                               lower_tolerance = true, kwargs...)
+    primitive = find_primitive(s; tolerance = tolerance)
+    n, sym    = international(primitive; tolerance = tolerance)
+    kind      = lattice_kind(primitive; tolerance = tolerance)
 
     primcell = ustrip.(primitive.cell)
 
@@ -628,7 +640,7 @@ function high_symmetry_kpoints(s::Structure; tolerance = DEFAULT_TOLERANCE, lowe
         error("Unknown lattice type $kind")
     end
     if lower_tolerance
-        return high_symmetry_kpoints(s, tolerance=tolerance * 10)
+        return high_symmetry_kpoints(s; tolerance = tolerance * 10)
     end
 end
 

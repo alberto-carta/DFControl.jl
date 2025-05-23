@@ -1,5 +1,5 @@
 import Base: parse
-import ..Structures: hubbard_type
+import ..Structures: hubbard_type, element
 import .FileIO: NeedleType
 
 function readoutput(c::Calculation{<:AbstractQE}, files...; kwargs...)
@@ -37,7 +37,7 @@ function qe_parse_time(str::AbstractString)
     return t
 end
 
-function qe_parse_output(c::Calculation{<:AbstractQE} , files...; kwargs...)
+function qe_parse_output(c::Calculation{<:AbstractQE}, files...; kwargs...)
     if Calculations.isprojwfc(c)
         return qe_parse_projwfc_output(files...)
     elseif Calculations.ishp(c)
@@ -100,8 +100,12 @@ function parse_Hubbard_block(f)
                 t = parse.(Float64, split(readline(f)))
                 vs = (up = t, down = zeros(length(t)))
                 push!(eigvals, vs)
-                push!(eigvec, (up = zeros(length(t), length(t)), down = zeros(length(t), length(t))))
-                push!(occupations, (up = zeros(length(t), length(t)), down = zeros(length(t), length(t))))
+                push!(eigvec,
+                      (up = zeros(length(t), length(t)),
+                       down = zeros(length(t), length(t))))
+                push!(occupations,
+                      (up = zeros(length(t), length(t)),
+                       down = zeros(length(t), length(t))))
             elseif cur_spin == :down
                 eigvals[curid].down .= parse.(Float64, split(readline(f)))
             else
@@ -113,18 +117,18 @@ function parse_Hubbard_block(f)
             end
         elseif occursin("eigenvectors", line)
             v = cur_spin == :noncolin ? eigvec[curid] : eigvec[curid][cur_spin]
-            for i = 1:size(v, 1)
+            for i in 1:size(v, 1)
                 v[i, :] .= parse.(Float64, split(readline(f)))
             end
         elseif occursin("occupation matrix", line)
             v = cur_spin == :noncolin ? occupations[curid] : occupations[curid][cur_spin]
-            for i = 1:size(v, 1)
+            for i in 1:size(v, 1)
                 v[i, :] .= parse.(Float64, split(readline(f)))
             end
         end
     end
     if isempty(magmoms) && !isempty(occupations)
-        magmoms = [0.0 for i=1:length(occupations)]
+        magmoms = [0.0 for i in 1:length(occupations)]
     end
     return [(id = i, trace = t, eigvals = val,
              eigvecs = vec,
@@ -252,7 +256,7 @@ end
 
 function qe_parse_constraint_energy(out, line, f)
     e = parse(Float64, split(line)[end-1])
-    push!(out, :constraint_energy, e)
+    return push!(out, :constraint_energy, e)
 end
 
 function parse_k_line(line)
@@ -353,14 +357,14 @@ end
 function qe_parse_atomic_force(out, line, f)
     sline = split(line)
     out[:force_axes] = sline[5][2:end]
-    readline(f) 
+    readline(f)
     forces = Vec3{Float64}[]
 
-    for i = 1:out[:nat]
+    for i in 1:out[:nat]
         sline = split(readline(f))
         push!(forces, Vec3(parse.(Float64, sline[end-2:end])))
     end
-    out[:forces]=forces
+    return out[:forces] = forces
 end
 
 function qe_parse_scf_iteration(out, line, f)
@@ -422,7 +426,6 @@ function qe_parse_magnetization(out, line, f)
     end
 end
 
-
 function qe_parse_timing(out, line, f)
     # Timing information is printed with a tree structure, thus
     # parent timing data should already be created when parsing
@@ -443,8 +446,8 @@ function qe_parse_timing(out, line, f)
             push!(out[:timing], td)
         elseif length(sline) == 9 # normal call
             td = TimingData(String(sline[1]), qe_parse_time(sline[3]),
-                                qe_parse_time(sline[5]), parse(Int, sline[8]),
-                                TimingData[])
+                            qe_parse_time(sline[5]), parse(Int, sline[8]),
+                            TimingData[])
             push!(out[:timing], td)
             if !isempty(curparent) # Child case
                 if curparent[1] == '*'
@@ -465,15 +468,15 @@ function qe_parse_timing(out, line, f)
     sline = split(line)
     push!(out[:timing],
           TimingData("PWSCF", qe_parse_time(sline[3]), qe_parse_time(sline[5]),
-                         1, TimingData[]))
+                     1, TimingData[]))
     # cleanup
     for td in out[:timing]
         id = findfirst(x -> x == ':', td.name)
         td.name = id !== nothing ? td.name[id+1:end] : td.name
         if isempty(td.cpu.periods) && !isempty(td.children)
-            td.cpu = sum(c->c.cpu, td.children)
-            td.wall = sum(c->c.wall, td.children)
-            td.calls = sum(c->c.calls, td.children)
+            td.cpu = sum(c -> c.cpu, td.children)
+            td.wall = sum(c -> c.wall, td.children)
+            td.calls = sum(c -> c.calls, td.children)
         end
     end
 end
@@ -492,8 +495,13 @@ function qe_parse_starting_magnetization(out, line, f)
     end
 end
 
-
 function qe_parse_starting_simplified_dftu(out, line, f)
+    # Simplified LDA+U calculation (l_max = 2) with parameters (eV):
+    #  atomic species    L          U    alpha       J0     beta
+    #     Ni             2     4.0000   0.0000   0.0000   0.0000
+    #     Ni1            2     4.0000   0.0000   0.0000   0.0000
+    # assumes default hubbard manifold in pre qe7.2
+    @warn "Parsing Hubbard parameters from pre qe7.2 output!"
     readline(f)
     out[:starting_simplified_dftu] = Dict{Symbol,DFTU}()
     line = readline(f)
@@ -501,12 +509,26 @@ function qe_parse_starting_simplified_dftu(out, line, f)
         sline = split(line)
         atsym = Symbol(sline[1])
         L = parse(Int, sline[2])
-        vals = parse.(Float64, sline[3:end])
-        # TODO test
-        out[:starting_simplified_dftu][atsym] = DFTU(;
-            l = L, types=["U", "J0"], values = [vals[1], vals[3]],
-            manifolds=["$(sline[1])-$(sline[2])", "$(sline[1])-$(sline[2])"],
-            α = vals[2], β = vals[4])
+        u, alpha, j0, beta = parse.(Float64, sline[3:6])
+        int2l = ["s", "p", "d", "f", "g"]
+        m = "$atsym-$(L+1)$(int2l[L+1])"
+        if iszero(j0)
+            types = ["U"]
+            manifolds = [m]
+            values = [u]
+        else
+            types = ["U", "J0"]
+            manifolds = fill(m, 2)
+            values = [u, j0]
+        end
+        dftu = DFTU(; l = L,
+                    types = types,
+                    values = values,
+                    manifolds = manifolds,
+                    α = alpha,
+                    beta = beta)
+        out[:starting_simplified_dftu][atsym] = dftu
+
         line = readline(f)
     end
 end
@@ -528,7 +550,7 @@ function qe_parse_Hubbard_values(out, line, f)
     # to properly parse this block, need to understand how the supercell is
     # constructed in qe to match atom id with atom labels
     # TODO: for now parsing only U
-    hubbard_values = Dict{Int, Tuple{String, Float64}}()
+    hubbard_values = Dict{Int,Tuple{String,Float64}}()
     line = readline(f)
     while !(isempty(line) || eof(f))
         sline = split(line)
@@ -540,57 +562,85 @@ function qe_parse_Hubbard_values(out, line, f)
         end
         line = readline(f)
     end
-    out[:Hubbard_values] = hubbard_values
+    return out[:Hubbard_values] = hubbard_values
 end
-        
-const QE_PW_PARSE_FUNCTIONS::Vector{Pair{NeedleType, Any}}  = [
-    "C/m^2" => qe_parse_polarization,
-    "lattice parameter" => qe_parse_lattice_parameter,
-    "number of Kohn-Sham states" => qe_parse_n_KS,
-    "number of electrons" => qe_parse_n_electrons,
-    "crystal axes" => qe_parse_crystal_axes,
-    "EXX-fraction" => (x, y, z) -> x[:hybrid] = true,
-    "EXX self-consistency reached" => (x,y,z) -> x[:hybrid_converged] = true,
-    "reciprocal axes" => qe_parse_reciprocal_axes,
-    "atomic species   valence    mass" => qe_parse_atomic_species,
-    "number of atoms/cell" => qe_parse_nat,
-    "Crystallographic axes" => qe_parse_crystal_positions,
-    "Cartesian axes" => qe_parse_cart_positions,
-    "PseudoPot" => qe_parse_pseudo,
-    "the Fermi energy is" => qe_parse_fermi,
-    "highest occupied" => qe_parse_highest_lowest,
-    "total energy  " => qe_parse_total_energy,
-    "SPIN UP" => (x, y, z) -> x[:colincalc] = true,
-    "cryst." => qe_parse_k_cryst, "cart." => qe_parse_k_cart,
-    "bands (ev)" => qe_parse_k_eigvals,
-    "End of self-consistent" => (x, y, z) -> haskey(x,
-                                                   :k_eigvals) &&
-       empty!(x[:k_eigvals]),
-    "End of band structure" => (x, y, z) -> haskey(x,
-                                                  :k_eigvals) &&
-       empty!(x[:k_eigvals]),
-    "CELL_PARAMETERS (" => qe_parse_cell_parameters,
-    "ATOMIC_POSITIONS (" => qe_parse_atomic_positions,
-    "Total force" => qe_parse_total_force,
-    "Forces acting on atoms" => qe_parse_atomic_force,
-    "iteration #" => qe_parse_scf_iteration,
-    "Magnetic moment per site" => qe_parse_colin_magmoms,
-    "estimated scf accuracy" => qe_parse_scf_accuracy,
-    "total magnetization" => qe_parse_total_magnetization,
-    "convergence has been" => (x, y, z) -> x[:scf_converged] = true,
-    "Begin final coordinates" => (x, y, z) -> x[:converged] = true,
-    "atom number" => qe_parse_magnetization,
-    "--- enter write_ns ---" => qe_parse_Hubbard,
-    "HUBBARD OCCUPATIONS" => qe_parse_Hubbard,
-    "Hubbard energy" => qe_parse_Hubbard_energy,
-    "HUBBARD ENERGY" => qe_parse_Hubbard_energy,
-    "stan-stan stan-bac" => qe_parse_Hubbard_values,
-    "init_run" => qe_parse_timing,
-    "Starting magnetic structure" => qe_parse_starting_magnetization,
-    "Simplified LDA+U calculation" => qe_parse_starting_simplified_dftu,
-    "JOB DONE." => (x, y, z) -> x[:finished] = true,
-    "CONSTRAINTS ENERGY" => qe_parse_constraint_energy,
-]
+
+function qe_parse_Hubbard_values_new(out, line, f)
+    @warn "Preliminary implementation of Hubbard values parsing from pw output"
+    #  Hubbard projectors: ortho-atomic
+    #  Hubbard parameters of DFT+U (Dudarev formulation) in eV:
+    #  U(Ni-3d)  =  4.0000
+    #  U(Ni1-3d) =  4.0000
+    for i in 1:2
+        line = strip(readline(f))
+    end
+    dftus = Dict{Symbol,DFTU}()
+    rx = r"(\w)\((.+)\)\s*=\s*(\d+\.\d+)"
+    lsyms = Dict{Char,Int}('s' => 0, 'p' => 1, 'd' => 2, 'f' => 3, 'g' => 4)
+    while !isempty(line)
+        @debug "pasrsing hubbard: $line"
+        m = match(rx, line)
+        type, manifold, value = m.captures
+        atsym = Symbol(split(manifold, "-")[1])
+        l = lsyms[manifold[end]]
+        dftu = DFTU(; l = l, types = [type],
+                    values = [parse(Float64, value)],
+                    manifolds = [manifold])
+        dftus[atsym] = dftu
+        line = strip(readline(f))
+    end
+
+    return out[:hubbard_block] = dftus
+end
+
+const QE_PW_PARSE_FUNCTIONS::Vector{Pair{NeedleType,Any}} = ["C/m^2" => qe_parse_polarization,
+                                                             "lattice parameter" => qe_parse_lattice_parameter,
+                                                             "number of Kohn-Sham states" => qe_parse_n_KS,
+                                                             "number of electrons" => qe_parse_n_electrons,
+                                                             "crystal axes" => qe_parse_crystal_axes,
+                                                             "EXX-fraction" => (x, y, z) -> x[:hybrid] = true,
+                                                             "EXX self-consistency reached" => (x, y, z) -> x[:hybrid_converged] = true,
+                                                             "reciprocal axes" => qe_parse_reciprocal_axes,
+                                                             "atomic species   valence    mass" => qe_parse_atomic_species,
+                                                             "number of atoms/cell" => qe_parse_nat,
+                                                             "Crystallographic axes" => qe_parse_crystal_positions,
+                                                             "Cartesian axes" => qe_parse_cart_positions,
+                                                             "PseudoPot" => qe_parse_pseudo,
+                                                             "the Fermi energy is" => qe_parse_fermi,
+                                                             "highest occupied" => qe_parse_highest_lowest,
+                                                             "total energy  " => qe_parse_total_energy,
+                                                             "SPIN UP" => (x, y, z) -> x[:colincalc] = true,
+                                                             "cryst." => qe_parse_k_cryst,
+                                                             "cart." => qe_parse_k_cart,
+                                                             "bands (ev)" => qe_parse_k_eigvals,
+                                                             "End of self-consistent" => (x, y, z) -> haskey(x,
+                                                                                                             :k_eigvals) &&
+                                                                 empty!(x[:k_eigvals]),
+                                                             "End of band structure" => (x, y, z) -> haskey(x,
+                                                                                                            :k_eigvals) &&
+                                                                 empty!(x[:k_eigvals]),
+                                                             "CELL_PARAMETERS (" => qe_parse_cell_parameters,
+                                                             "ATOMIC_POSITIONS (" => qe_parse_atomic_positions,
+                                                             "Total force" => qe_parse_total_force,
+                                                             "Forces acting on atoms" => qe_parse_atomic_force,
+                                                             "iteration #" => qe_parse_scf_iteration,
+                                                             "Magnetic moment per site" => qe_parse_colin_magmoms,
+                                                             "estimated scf accuracy" => qe_parse_scf_accuracy,
+                                                             "total magnetization" => qe_parse_total_magnetization,
+                                                             "convergence has been" => (x, y, z) -> x[:scf_converged] = true,
+                                                             "Begin final coordinates" => (x, y, z) -> x[:converged] = true,
+                                                             "atom number" => qe_parse_magnetization,
+                                                             "--- enter write_ns ---" => qe_parse_Hubbard,
+                                                             "HUBBARD OCCUPATIONS" => qe_parse_Hubbard,
+                                                             "Hubbard energy" => qe_parse_Hubbard_energy,
+                                                             "HUBBARD ENERGY" => qe_parse_Hubbard_energy,
+                                                             "stan-stan stan-bac" => qe_parse_Hubbard_values,
+                                                             "Hubbard projectors:" => qe_parse_Hubbard_values_new,
+                                                             "init_run" => qe_parse_timing,
+                                                             "Starting magnetic structure" => qe_parse_starting_magnetization,
+                                                             "Simplified LDA+U calculation" => qe_parse_starting_simplified_dftu,
+                                                             "JOB DONE." => (x, y, z) -> x[:finished] = true,
+                                                             "CONSTRAINTS ENERGY" => qe_parse_constraint_energy]
 
 """
     qe_parse_pw_output(str::String; parse_funcs::Vector{Pair{String}}=Pair{String,<:Function}[])
@@ -600,7 +650,7 @@ The additional `parse_funcs` should be of the form:
 `func(out_dict, line, f)` with `f` the file. 
 """
 function qe_parse_pw_output(str;
-                           parse_funcs::Vector{<:Pair} = Pair{String}[])
+                            parse_funcs::Vector{<:Pair} = Pair{String}[])
     out = parse_file(str, QE_PW_PARSE_FUNCTIONS; extra_parse_funcs = parse_funcs)
     if !haskey(out, :finished)
         out[:finished] = false
@@ -621,9 +671,11 @@ function qe_parse_pw_output(str;
         if haskey(out, :Hubbard_values)
             tmp_flags[:Hubbard_values] = out[:Hubbard_values]
         end
-        # TODO: add Hubbard block
+        # TODO: parsing Hubbard block
+        hubbard_block = get!(out, :hubbard_block, nothing)
         out[:initial_structure] = extract_structure!(tmp_flags, cell_data,
-                                                     out[:atsyms], atoms_data, pseudo_data, nothing)
+                                                     out[:atsyms], atoms_data, pseudo_data,
+                                                     hubbard_block)
         # Add starting mag and DFTU
         if haskey(out, :starting_magnetization)
             for (atsym, mag) in out[:starting_magnetization]
@@ -659,8 +711,10 @@ function qe_parse_pw_output(str;
         if haskey(out, :Hubbard_values)
             tmp_flags[:Hubbard_values] = out[:Hubbard_values]
         end
+        hubbard_block = get!(out, :hubbard_block, nothing)
         out[:final_structure] = extract_structure!(tmp_flags, cell_data,
-                                                   out[:atsyms], atoms_data, pseudo_data, nothing)
+                                                   out[:atsyms], atoms_data, pseudo_data,
+                                                   hubbard_block)
         # Add starting mag and DFTU
         if haskey(out, :starting_magnetization)
             for (atsym, mag) in out[:starting_magnetization]
@@ -689,11 +743,15 @@ function qe_parse_pw_output(str;
                              w = out[:k_cart].w)
         end
         if get(out, :colincalc, false)
-            out[:bands]   = (up = [Band(out[:k_cart].v, out[:k_cryst].v, zeros(length(out[:k_cart].v))) for i in 1:length(out[:k_eigvals][1])],
-            down =[Band(out[:k_cart].v, out[:k_cryst].v, zeros(length(out[:k_cart].v))) for i in 1:length(out[:k_eigvals][1])])
+            out[:bands] = (up = [Band(out[:k_cart].v, out[:k_cryst].v,
+                                      zeros(length(out[:k_cart].v)))
+                                 for i in 1:length(out[:k_eigvals][1])],
+                           down = [Band(out[:k_cart].v, out[:k_cryst].v,
+                                        zeros(length(out[:k_cart].v)))
+                                   for i in 1:length(out[:k_eigvals][1])])
         else
             out[:bands] = [Band(out[:k_cart].v, out[:k_cryst].v,
-                                    zeros(length(out[:k_cart].v)))
+                                zeros(length(out[:k_cart].v)))
                            for i in 1:length(out[:k_eigvals][1])]
         end
         for i in 1:length(out[:k_eigvals])
@@ -742,6 +800,17 @@ function Base.push!(out::Dict, k::Symbol, v)
     end
 end
 
+# function qe_md_parse_total_energy(out, line, f)
+#     sline = split(line)
+#     e = parse(Float64, sline[5])
+#     # TODO what happens if one time step does not converge?
+#     # will pw continue?
+#     # if yes, then this func needs consider that and take the last
+#     # total energy from scf; if not, the out[:scf_steps] and out[:scf_converged]
+#     # is kind of unnecessary
+#     push!(out, :total_energy, e)
+# end
+
 function qe_md_parse_total_energy(out, line, f)
     step = out[:step]
     if haskey(out[:total_energy], step)
@@ -751,7 +820,7 @@ function qe_md_parse_total_energy(out, line, f)
     end
 end
 
-function qe_md_parse_step(out, line,  f)
+function qe_md_parse_step(out, line, f)
     cur_step = parse(Int, split(line)[end])
     prev_step = get!(out, :step, 0)
     if cur_step > prev_step
@@ -762,7 +831,7 @@ function qe_md_parse_step(out, line,  f)
 end
 
 function qe_md_parse_convergence(out, line, f)
-    push!(out, :scf_convergence, parse(Float64, split(line)[end-1]))
+    return push!(out, :scf_convergence, parse(Float64, split(line)[end-1]))
 end
 
 function qe_md_parse_kinetic(out, line, f)
@@ -772,7 +841,7 @@ function qe_md_parse_kinetic(out, line, f)
     push!(out, :temperature, parse(Float64, split(line)[end-1]))
 
     line = readline(f)
-    push!(out, :md_total_energy, parse(Float64, split(line)[end-1]))
+    return push!(out, :md_total_energy, parse(Float64, split(line)[end-1]))
 end
 
 function qe_md_parse_atomic_positions(out, line, f)
@@ -785,9 +854,8 @@ function qe_md_parse_atomic_positions(out, line, f)
         push!(atoms, (key, Point3(parse.(Float64, s_line[2:end])...)))
         line = readline(f)
     end
-    push!(out, :atomic_positions, atoms)
+    return push!(out, :atomic_positions, atoms)
 end
-
 
 function qe_md_parse_highest_lowest(out, line, f)
     sline = split(line)
@@ -795,32 +863,32 @@ function qe_md_parse_highest_lowest(out, line, f)
     low = parse(Float64, sline[end])
     push!(out, :fermi, high)
     push!(out, :highest_occupied, high)
-    push!(out, :lowest_occupied, low)
+    return push!(out, :lowest_occupied, low)
 end
 
 function qe_md_parse_atomic_force(out, line, f)
     sline = split(line)
     out[:force_axes] = sline[5][2:end]
 
-    readline(f) 
+    readline(f)
     forces = Vec3{Float64}[]
 
-    for i = 1:out[:nat]
+    for i in 1:out[:nat]
         sline = split(readline(f))
         push!(forces, Vec3(parse.(Float64, sline[end-2:end])))
     end
-    push!(out, :forces, forces)
+    return push!(out, :forces, forces)
 end
 
 function qe_md_parse_total_magnetization(out, line, f)
-    for i = 1:3
+    for i in 1:3
         line = readline(f)
     end
-    push!(out, :total_magnetization, parse(Float64, split(line)[end-2]))
+    return push!(out, :total_magnetization, parse(Float64, split(line)[end-2]))
 end
 
 function qe_md_parse_timestep(out, line, f)
-    out[:time_step] = parse(Float64, split(line)[end-1])
+    return out[:time_step] = parse(Float64, split(line)[end-1])
 end
 
 """
@@ -839,26 +907,14 @@ function qe_md_parse_iteration(out, line, f)
         end
         push!(out, :scf_converged, false) # => will be set to true if convergence
     end
-    out[:scf_iteration] = it
+    return out[:scf_iteration] = it
 end
 
 function qe_md_parse_finish(out, line, f)
     # push scf steps for last time step
     push!(out[:scf_steps], out[:scf_iteration])
     # delete temperary value
-    delete!(out, :scf_iteration)
-end
-
-
-function qe_md_parse_total_energy(out, line, f)
-    sline = split(line)
-    e = parse(Float64, sline[5])
-    # TODO what happens if one time step does not converge?
-    # will pw continue?
-    # if yes, then this func needs consider that and take the last
-    # total energy from scf; if not, the out[:scf_steps] and out[:scf_converged]
-    # is kind of unnecessary
-    push!(out, :total_energy, e)
+    return delete!(out, :scf_iteration)
 end
 
 function qe_md_parse_converge(out, line, f)
@@ -867,53 +923,54 @@ function qe_md_parse_converge(out, line, f)
     # final total energy
     qe_md_parse_total_energy(out, line, f)
     # convergence
-    out[:scf_converged][end] = true
+    return out[:scf_converged][end] = true
 end
 
-const QE_MD_PARSE_FUNCTIONS::Vector{Pair{NeedleType, Any}} = [
-    "Entering Dynamics"                     => qe_md_parse_step,
-    "Time step"                             => qe_md_parse_timestep,
-    # "convergence has been"                  => qe_md_parse_convergence,
-    "kinetic energy"                        => qe_md_parse_kinetic,
-    "ATOMIC_POSITIONS"                      => qe_md_parse_atomic_positions,
-    "JOB DONE."                             => (x, y, z) -> x[:finished]  = true,
-    "lattice parameter"                     => qe_parse_lattice_parameter,
-    "number of Kohn-Sham states"            => qe_parse_n_KS,
-    "number of electrons"                   => qe_parse_n_electrons,
-    "crystal axes"                          => qe_parse_crystal_axes,
-    "reciprocal axes"                       => qe_parse_reciprocal_axes,
-    "atomic species   valence    mass"      => qe_parse_atomic_species,
-    "number of atoms/cell"                  => qe_parse_nat,
-    "Crystallographic axes"                 => qe_parse_crystal_positions,
-    "Cartesian axes"                        => qe_parse_cart_positions,
-    "cryst."                                => qe_parse_k_cryst,
-    "cart."                                 => qe_parse_k_cart,
-    "PseudoPot"                             => qe_parse_pseudo,
-    # "the Fermi energy is"                 => qe_md_parse_fermi, # TODO list of Fermi level?
-    "highest occupied, lowest unoccupied "  => qe_md_parse_highest_lowest,
-    "SPIN UP"                               => (x, y, z) -> x[:colincalc] = true,
-    "Forces acting on atoms"                => qe_md_parse_atomic_force,
-    "!    total energy"                     => qe_md_parse_converge,
-    # "bands (ev)"                          => qe_parse_k_eigvals,
-    # "End of self-consistent"              => (x, y, z) -> haskey(x,:k_eigvals) && empty!(x[:k_eigvals]),
-    # "End of band structure"               => (x, y, z) -> haskey(x, :k_eigvals) && empty!(x[:k_eigvals]),
-    # "CELL_PARAMETERS ("                   => qe_parse_cell_parameters,  # TODO check vc-relax
-    # "Total force"                         => qe_parse_total_force,
-    "iteration #"                           => qe_md_parse_iteration,
-    "End of molecular dynamics calculation" => qe_md_parse_finish,
-    # "Magnetic moment per site"            => qe_parse_colin_magmoms,
-    "estimated scf accuracy"                => qe_parse_scf_accuracy,
-    # "Begin final coordinates"             => (x, y, z) -> x[:converged] = true,
-    # "atom number"                         => qe_parse_magnetization,
-    "--- enter write_ns ---"                => qe_parse_Hubbard,
-    "== HUBBARD OCCUPATIONS =="                   => qe_parse_Hubbard,
-    "Hubbard energy"                        => qe_parse_Hubbard_energy,
-    "HUBBARD ENERGY"                        => qe_parse_Hubbard_energy,
-    "stan-stan stan-bac"                    => qe_parse_Hubbard_values,
-    "init_run"                              => qe_parse_timing,
-    "Starting magnetic structure"           => qe_parse_starting_magnetization,
-    # "Simplified LDA+U calculation"        => qe_parse_starting_simplified_dftu,
-]
+const QE_MD_PARSE_FUNCTIONS::Vector{Pair{NeedleType,Any}} = ["Entering Dynamics" => qe_md_parse_step,
+                                                             "Time step"         => qe_md_parse_timestep,
+                                                             # "convergence has been"                  => qe_md_parse_convergence,
+                                                             "kinetic energy"                   => qe_md_parse_kinetic,
+                                                             "ATOMIC_POSITIONS"                 => qe_md_parse_atomic_positions,
+                                                             "JOB DONE."                        => (x, y, z) -> x[:finished] = true,
+                                                             "lattice parameter"                => qe_parse_lattice_parameter,
+                                                             "number of Kohn-Sham states"       => qe_parse_n_KS,
+                                                             "number of electrons"              => qe_parse_n_electrons,
+                                                             "crystal axes"                     => qe_parse_crystal_axes,
+                                                             "reciprocal axes"                  => qe_parse_reciprocal_axes,
+                                                             "atomic species   valence    mass" => qe_parse_atomic_species,
+                                                             "number of atoms/cell"             => qe_parse_nat,
+                                                             "Crystallographic axes"            => qe_parse_crystal_positions,
+                                                             "Cartesian axes"                   => qe_parse_cart_positions,
+                                                             "cryst."                           => qe_parse_k_cryst,
+                                                             "cart."                            => qe_parse_k_cart,
+                                                             "PseudoPot"                        => qe_parse_pseudo,
+                                                             # "the Fermi energy is"                 => qe_md_parse_fermi, # TODO list of Fermi level?
+                                                             "highest occupied, lowest unoccupied " => qe_md_parse_highest_lowest,
+                                                             "SPIN UP"                              => (x, y, z) -> x[:colincalc] = true,
+                                                             "Forces acting on atoms"               => qe_md_parse_atomic_force,
+                                                             "!    total energy"                    => qe_md_parse_converge,
+                                                             # "bands (ev)"                          => qe_parse_k_eigvals,
+                                                             # "End of self-consistent"              => (x, y, z) -> haskey(x,:k_eigvals) && empty!(x[:k_eigvals]),
+                                                             # "End of band structure"               => (x, y, z) -> haskey(x, :k_eigvals) && empty!(x[:k_eigvals]),
+                                                             # "CELL_PARAMETERS ("                   => qe_parse_cell_parameters,  # TODO check vc-relax
+                                                             # "Total force"                         => qe_parse_total_force,
+                                                             "iteration #"                           => qe_md_parse_iteration,
+                                                             "End of molecular dynamics calculation" => qe_md_parse_finish,
+                                                             # "Magnetic moment per site"            => qe_parse_colin_magmoms,
+                                                             "estimated scf accuracy" => qe_parse_scf_accuracy,
+                                                             # "Begin final coordinates"             => (x, y, z) -> x[:converged] = true,
+                                                             # "atom number"                         => qe_parse_magnetization,
+                                                             "--- enter write_ns ---" => qe_parse_Hubbard,
+                                                             "== HUBBARD OCCUPATIONS ==" => qe_parse_Hubbard,
+                                                             "Hubbard energy" => qe_parse_Hubbard_energy,
+                                                             "HUBBARD ENERGY" => qe_parse_Hubbard_energy,
+                                                             # pre qe7.2
+                                                             "stan-stan stan-bac" => qe_parse_Hubbard_values,
+                                                             # post qe7.2
+                                                             "Hubbard projectors" => qe_parse_Hubbard_values_new,
+                                                             "init_run" => qe_parse_timing,
+                                                             "Starting magnetic structure" => qe_parse_starting_magnetization,
+                                                             "Simplified LDA+U calculation" => qe_parse_starting_simplified_dftu]
 
 """
     qe_parse_pwmd_output(str::String; parse_funcs::Vector{Pair{String}}=Pair{String,<:Function}[])
@@ -928,9 +985,8 @@ Entries in the output dictionary includes,
 `forces`: forces for each MD step in Ry/au using cartesian axes
 `atomic_positions`: atomic positions of each MD step
 """
-function qe_parse_pwmd_output(
-    str; parse_funcs::Vector{<:Pair} = Pair{String, Function}[])
-    out = Dict{Symbol, Any}(:step=>0)
+function qe_parse_pwmd_output(str; parse_funcs::Vector{<:Pair} = Pair{String,Function}[])
+    out = Dict{Symbol,Any}(:step => 0)
     out = parse_file(str, QE_MD_PARSE_FUNCTIONS; extra_parse_funcs = parse_funcs)
     if !haskey(out, :finished)
         out[:finished] = false
@@ -993,29 +1049,33 @@ function qe_parse_projwfc_output(files...)
     if tp !== nothing
         out[:energies], out[:pdos] = tp
     end
-    out[:finished] = !haskey(out,:enegies) || isempty(out[:energies]) ? false : true
+    out[:finished] = !haskey(out, :enegies) || isempty(out[:energies]) ? false : true
     return out
 end
 
-function pdos(files, kresolved=false)
+function pdos(files, kresolved = false)
     dir = splitdir(files[1])[1]
     atfiles = filter(x -> occursin("atm", x), files)
-    
-    atsyms = Symbol.(unique(map(x -> x[findfirst("(", x)[1]+1:findfirst(")", x)[1]-1], atfiles)))
-    magnetic = (x->occursin("ldosup",x) && occursin("ldosdw",x))(readline(files[1]))
+
+    atsyms = Symbol.(unique(map(x -> x[findfirst("(", x)[1]+1:findfirst(")", x)[1]-1],
+                                atfiles)))
+    magnetic = (x -> occursin("ldosup", x) && occursin("ldosdw", x))(readline(files[1]))
     soc = occursin(".5", files[1])
     files = joinpath.((dir,), files)
     energies, = kresolved ? qe_parse_kpdos(files[1]) : qe_parse_pdos(files[1])
     if !isempty(energies)
-        totdos = Dict{Symbol, Dict{Structures.Orbital, Array}}()
+        totdos = Dict{Symbol,Dict{Structures.Orbital,Array}}()
         for atsym in atsyms
-            totdos[atsym] = Dict{Structures.Orbital, Array}()
+            totdos[atsym] = Dict{Structures.Orbital,Array}()
             if kresolved
-                for f in filter(x->occursin("("*string(atsym)*")", x), files)
+                for f in filter(x -> occursin("(" * string(atsym) * ")", x), files)
                     id1 = findlast("(", f) + 1
-                    orb = soc ? Structures.orbital(f[id1, findnext("_", f, id1+1)-1]) : Structures.orbital(f[id1, findnext(")", f, id1+1)-1])
+                    orb = soc ? Structures.orbital(f[id1, findnext("_", f, id1 + 1)-1]) :
+                          Structures.orbital(f[id1, findnext(")", f, id1 + 1)-1])
                     if !haskey(totdos[atsym], orb)
-                        totdos[atsym][orb] = magnetic && !soc ? zeros(size(energies, 1), 2) : zeros(size(energies, 1))
+                        totdos[atsym][orb] = magnetic && !soc ?
+                                             zeros(size(energies, 1), 2) :
+                                             zeros(size(energies, 1))
                     end
                     atdos = totdos[atsym][orb]
                     if magnetic && !occursin(".5", f)
@@ -1025,15 +1085,19 @@ function pdos(files, kresolved=false)
                         atdos[:, 2] .+= reduce(+, td; dims = 2) ./ size(tu, 2)
                     else
                         t = qe_parse_kpdos(f, 1)[2]
-                        atdos .+= (reshape(reduce(+, t; dims = 2), size(atdos, 1)) ./ size(t, 2))
+                        atdos .+= (reshape(reduce(+, t; dims = 2), size(atdos, 1)) ./
+                                   size(t, 2))
                     end
                 end
             else
-                for f in filter(x->occursin("("*string(atsym)*")", x), files)
+                for f in filter(x -> occursin("(" * string(atsym) * ")", x), files)
                     id1 = findlast("(", f)[1] + 1
-                    orb = soc ? Structures.orbital(f[id1:findnext("_", f, id1+1)[1]-1]) : Structures.orbital(f[id1:findnext(")", f, id1+1)[1]-1])
+                    orb = soc ? Structures.orbital(f[id1:findnext("_", f, id1 + 1)[1]-1]) :
+                          Structures.orbital(f[id1:findnext(")", f, id1 + 1)[1]-1])
                     if !haskey(totdos[atsym], orb)
-                        totdos[atsym][orb] = magnetic && !soc ? zeros(size(energies, 1), 2) : zeros(size(energies, 1))
+                        totdos[atsym][orb] = magnetic && !soc ?
+                                             zeros(size(energies, 1), 2) :
+                                             zeros(size(energies, 1))
                     end
                     atdos = totdos[atsym][orb]
                     if magnetic && !occursin(".5", f)
@@ -1069,7 +1133,7 @@ function qe_parse_projwfc(filename)
     nkstot   = 0
     npwx     = 0
     nkb      = 0
-    if i_prob_sizes === nothing 
+    if i_prob_sizes === nothing
         error("Version of QE too low, cannot parse projwfc output")
     end
     istart = findfirst(x -> x == "Atomic states used for projection", lines) + 2
@@ -1176,7 +1240,6 @@ function qe_parse_pert_at(out, line, f)
     end
 end
 
-
 function qe_parse_Hubbard_U(out, line, f)
     out[:Hubbard_U] = []
     readline(f)
@@ -1197,17 +1260,19 @@ function qe_parse_HP_error(out, line, f)
         line = readline(f)
     end
     fermi_dos = parse(Float64, split(line)[end])
-    out[:fermi_dos] = fermi_dos
+    return out[:fermi_dos] = fermi_dos
 end
 
 const QE_HP_PARSE_FUNCS = ["will be perturbed" => qe_parse_pert_at,
                            "Hubbard U parameters:" => qe_parse_Hubbard_U,
                            "WARNING: The Fermi energy shift is zero or too big!" => qe_parse_HP_error]
 
-function qe_parse_hp_output(hp_file, hubbard_files...; parse_funcs = Pair{String,<:Function}[])
+function qe_parse_hp_output(hp_file, hubbard_files...;
+                            parse_funcs = Pair{String,<:Function}[])
     out = parse_file(hp_file, QE_HP_PARSE_FUNCS; extra_parse_funcs = parse_funcs)
     if !isempty(hubbard_files)
-        parse_file(hubbard_files[1], QE_HP_PARSE_FUNCS; extra_parse_funcs = parse_funcs, out = out)
+        parse_file(hubbard_files[1], QE_HP_PARSE_FUNCS; extra_parse_funcs = parse_funcs,
+                   out = out)
     end
     return out
 end
@@ -1232,11 +1297,11 @@ end
 #TODO handle more fancy cells
 function extract_cell!(flags, cell_block)
     @assert cell_block !== nothing
-    a = 1.0*Ang
+    a = 1.0 * Ang
     if cell_block.option == :alat
         a = alat(flags)
     elseif cell_block.option == :bohr
-        a = 1*bohr
+        a = 1 * bohr
     end
     return (a .* cell_block.data)'
 end
@@ -1246,16 +1311,19 @@ end
     To fully use Hubbard correction, use qe7.2 onwards where the input
     takes a dedicated Hubbard block.
 """
-function qe_DFTU(speciesid::Int, atsyms::AbstractVector{Symbol}, parsed_flags::Dict{Symbol,Any},)
-    @warn "Parsing Hubbard U parameters using old syntax (prior to qe7.2)."
+function qe_DFTU(speciesid::Int, atsyms::AbstractVector{Symbol},
+                 parsed_flags::Dict{Symbol,Any})
+    @warn "Try parsing Hubbard U parameters using old syntax (prior to qe7.2)."
     if haskey(parsed_flags, :Hubbard_U) && !iszero(parsed_flags[:Hubbard_U][speciesid])
         @debug "Hubbard U for atom $speciesid: $(parsed_flags[:Hubbard_U][speciesid])"
-        # TODO hardcoded according to default setting before qe7.2,
-        # User can potential change manifolds by modifying source code.
-        # Input file genereated from this will be correct since it is not used.
+        # TODO n and l is hardcoded according to default setting before qe7.2,
+        # User can potential change manifolds by modifying source code which cannot be read from qe input
+        # However, input file genereated from this will be correct since it is not used.
         el = atsyms[speciesid]
-        manifold = String(el) * "-" * ELEMENT_TO_N[el] * ELEMENT_TO_L[el]
-        return DFTU(; types=["U"], values=[parsed_flags[:Hubbard_U][speciesid]], manifolds=[manifold])
+        el_pure = element(el).symbol
+        manifold = "$el-$(ELEMENT_TO_N[el_pure])$(ELEMENT_TO_L[el_pure])"
+        return DFTU(; types = ["U"], values = [parsed_flags[:Hubbard_U][speciesid]],
+                    manifolds = [manifold])
     else
         return DFTU()
     end
@@ -1281,7 +1349,8 @@ function qe_magnetization(atid::Int, parsed_flags::Dict{Symbol,Any})
     end
 end
 
-function extract_atoms!(parsed_flags, atsyms, atom_block, pseudo_block, hubbard_block, cell::Mat3)
+function extract_atoms!(parsed_flags, atsyms, atom_block, pseudo_block, hubbard_block,
+                        cell::Mat3)
     atoms = Atom[]
 
     option = atom_block.option
@@ -1299,7 +1368,8 @@ function extract_atoms!(parsed_flags, atsyms, atom_block, pseudo_block, hubbard_
         if haskey(pseudo_block.data, atsym)
             pseudo = pseudo_block.data[atsym]
         else
-            elkey = getfirst(x -> x != atsym && Structures.element(x) == Structures.element(atsym),
+            elkey = getfirst(x -> x != atsym &&
+                                 Structures.element(x) == Structures.element(atsym),
                              keys(pseudo_block.data))
             pseudo = elkey !== nothing ? pseudo_block.data[elkey] : Pseudo("", "", "")
         end
@@ -1310,7 +1380,8 @@ function extract_atoms!(parsed_flags, atsyms, atom_block, pseudo_block, hubbard_
                    position_cryst = UnitfulAtomic.ustrip.(inv(cell) * pos),
                    pseudo = pseudo,
                    magnetization = qe_magnetization(speciesid, parsed_flags),
-                   dftu = hubbard_block === nothing ? qe_DFTU(speciesid, atsyms, parsed_flags) : hubbard_block[atsym]))
+                   dftu = hubbard_block === nothing ?
+                          qe_DFTU(speciesid, atsyms, parsed_flags) : hubbard_block[atsym]))
     end
 
     return atoms
@@ -1322,7 +1393,8 @@ function extract_structure!(parsed_flags, cell_block, atsyms, atom_block,
         return nothing
     end
     cell = extract_cell!(parsed_flags, cell_block)
-    atoms = extract_atoms!(parsed_flags, atsyms, atom_block, pseudo_block, hubbard_block, cell)
+    atoms = extract_atoms!(parsed_flags, atsyms, atom_block, pseudo_block, hubbard_block,
+                           cell)
     return Structure(cell, atoms)
 end
 
@@ -1340,8 +1412,8 @@ function separate(f, A::AbstractVector{T}) where {T}
     return reverse(true_part), reverse(false_part)
 end
 
-function qe_parse_flags(inflags, nat::Int=0)
-    flags = Dict{Symbol, Any}()
+function qe_parse_flags(inflags, nat::Int = 0)
+    flags = Dict{Symbol,Any}()
 
     for m_ in inflags
         sym = Symbol(m_.captures[1])
@@ -1350,8 +1422,9 @@ function qe_parse_flags(inflags, nat::Int=0)
             flags[sym] = strip(m[2], ''')
         else
             # normal flag
-            v = replace(replace(replace(lowercase(m[2]), ".true." => "true"), ".false." => "false"), "'" => "")
-            
+            v = replace(replace(replace(lowercase(m[2]), ".true." => "true"),
+                                ".false." => "false"), "'" => "")
+
             if match(r"\d\.?d[-+]?\d", v) !== nothing # At least one number present
                 v = replace(v, "d" => "e")
             end
@@ -1361,7 +1434,7 @@ function qe_parse_flags(inflags, nat::Int=0)
                 tval = Meta.parse(v)
                 parsed_val = tval isa Symbol ? string(tval) : tval
             end
-            
+
             if m[1] === nothing
                 flags[sym] = parsed_val
             else
@@ -1371,9 +1444,11 @@ function qe_parse_flags(inflags, nat::Int=0)
                 ids = parse.(Int, split(m[1], ","))
                 if !haskey(flags, sym)
                     if length(ids) == 1
-                        flags[sym] = length(parsed_val) == 1 ? zeros(nat) : fill(zeros(length(parsed_val)), nat)
+                        flags[sym] = length(parsed_val) == 1 ? zeros(nat) :
+                                     fill(zeros(length(parsed_val)), nat)
                     elseif length(ids) == 2
-                        flags[sym] = length(parsed_val) == 1 ? zeros(nat, nat) : fill(zeros(length(parsed_val)), nat, nat)
+                        flags[sym] = length(parsed_val) == 1 ? zeros(nat, nat) :
+                                     fill(zeros(length(parsed_val)), nat, nat)
                     elseif length(ids) == 3
                         flags[sym] = zeros(7, 4, nat)
                     elseif length(ids) == 4
@@ -1400,19 +1475,17 @@ function qe_parse_flags(inflags, nat::Int=0)
     return flags
 end
 
-
-CARDS = Set([
-    "cell_parameters",
-    "occupations",
-    "hubbard",
-    "k_points",
-    "solvents",
-    "atomic_species",
-    "atomic_positions",
-    "additional_k_points",
-    "atomic_forces",
-    "constraints",
-    "atomic_velocities"])
+CARDS = Set(["cell_parameters",
+             "occupations",
+             "hubbard",
+             "k_points",
+             "solvents",
+             "atomic_species",
+             "atomic_positions",
+             "additional_k_points",
+             "atomic_forces",
+             "constraints",
+             "atomic_velocities"])
 
 """
     qe_parse_calculation(file)
@@ -1429,7 +1502,7 @@ function qe_parse_calculation(file)
         contents = split(file, "\n")
     end
 
-    pre_7_2=true
+    pre_7_2 = true
 
     lines = map(contents) do l
         id = findfirst(isequal('!'), l)
@@ -1442,7 +1515,7 @@ function qe_parse_calculation(file)
 
     flagreg = r"([\w\d]+)(?:\(((?:\s*,*\d+\s*,*)*)\))?\s*=\s*([^!,\n]*)"
     unused_ids = Int[]
-    flagmatches = Dict{Symbol, Vector{RegexMatch}}()
+    flagmatches = Dict{Symbol,Vector{RegexMatch}}()
     curv = nothing
     blockreg = r"&([\w\d]+)"
     card_ids = Int[]
@@ -1466,8 +1539,8 @@ function qe_parse_calculation(file)
         push!(unused_ids, i)
     end
     sort!(card_ids)
-    @debug "all flags: "  keys(flagmatches)
-    @debug "all cards: "  [lines[i] for i in card_ids]
+    @debug "all flags: " keys(flagmatches)
+    @debug "all cards: " [lines[i] for i in card_ids]
 
     function findcard(s)
         idid = findfirst(i -> occursin(s, lowercase(lines[i])), unused_ids)
@@ -1475,13 +1548,13 @@ function qe_parse_calculation(file)
     end
 
     function nextcard(i)
-        id = findfirst(j->j>i, card_ids)
-        return id !== nothing ? card_ids[id] : length(lines)
+        id = findfirst(j -> j > i, card_ids)
+        return id !== nothing ? card_ids[id] : nothing
     end
 
     used_lineids = Int[]
 
-    allflags = Dict{Symbol, Dict{Symbol, Any}}()
+    allflags = Dict{Symbol,Dict{Symbol,Any}}()
     for (b, flgs) in flagmatches
         if b == :system
             continue
@@ -1501,13 +1574,14 @@ function qe_parse_calculation(file)
         push!(used_lineids, i_species)
 
         pseudos = Dict{Symbol,Pseudo}()
-        pseudo_match = haskey(allflags, :control) ? pop!(allflags[:control], :pseudo_dir, nothing) : nothing
+        pseudo_match = haskey(allflags, :control) ?
+                       pop!(allflags[:control], :pseudo_dir, nothing) : nothing
         pseudo_dir = pseudo_match !== nothing ? pseudo_match : "."
 
         atsyms = Symbol[]
         for k in 1:ntyp
             push!(used_lineids, i_species + k)
-            sline = strip_split(lines[i_species + k])
+            sline = strip_split(lines[i_species+k])
             atsym = Symbol(sline[1])
             ppath = pseudo_dir != "." ? joinpath(pseudo_dir, sline[end]) : sline[end]
             pseudos[atsym] = Pseudo("", ppath, "")
@@ -1517,12 +1591,12 @@ function qe_parse_calculation(file)
         append!(used_lineids, [i_cell, i_cell + 1, i_cell + 2, i_cell + 3])
         cell_option = cardoption(lines[i_cell])
         cell = Mat3([parse(Float64, split(lines[i_cell+k])[j])
-                                     for k in 1:3, j in 1:3])
+                     for k in 1:3, j in 1:3])
         atoms_option = cardoption(lines[i_positions])
-        atoms = Tuple{Symbol,Point3{Float64}}[]         
+        atoms = Tuple{Symbol,Point3{Float64}}[]
         for k in 1:nat
             push!(used_lineids, i_positions + k)
-            sline = split(lines[i_positions + k])
+            sline = split(lines[i_positions+k])
             atsym = Symbol(sline[1])
             point = Point3(parse.(Float64, sline[2:4]))
             push!(atoms, (atsym, point))
@@ -1531,8 +1605,9 @@ function qe_parse_calculation(file)
         sysflags = qe_parse_flags(sysblock, nat)
 
         i_hubbard = findcard("hubbard")
-        
+
         if i_hubbard !== nothing
+            @debug "Parsing post qe7.2 Hubbard input"
             @debug "Hubbard card line" lines[i_hubbard]
             pre_7_2 = false
             projection_type = String(cardoption(lines[i_hubbard]))
@@ -1540,10 +1615,9 @@ function qe_parse_calculation(file)
 
             # go through Hubbard card
             @debug "parsing `Hubbard` section"
-            @debug "all cards: "  [lines[i] for i in card_ids]
-            @debug "Next card line" lines[nextcard(i_hubbard)]
-            dftus = Dict{Symbol, DFTU}()
-            for k in i_hubbard+1:nextcard(i_hubbard)-1
+            @debug "current line: " lines[i_hubbard]
+            dftus = Dict{Symbol,DFTU}()
+            for k in i_hubbard+1:i_hubbard+ntyp
                 @debug lines[k]
                 push!(used_lineids, k)
                 isempty(lines[k]) && continue
@@ -1555,7 +1629,7 @@ function qe_parse_calculation(file)
 
                 dftu = get!(dftus, atsym, DFTU())
                 dftu.projection_type = projection_type
-                
+
                 push!(dftu.types, hubtype)
                 push!(dftu.manifolds, join(manifolds, " "))
                 push!(dftu.values, val)
@@ -1568,17 +1642,20 @@ function qe_parse_calculation(file)
             end
             @debug "Hubbard card" dftus
 
-            # TODO Hubbard blocks are missing
             @debug "parsing structure"
-            structure = extract_structure!(sysflags, (option = cell_option, data=cell), atsyms,
-                                       (option = atoms_option, data=atoms), (data=pseudos,), dftus)
-                
+            structure = extract_structure!(sysflags, (option = cell_option, data = cell),
+                                           atsyms,
+                                           (option = atoms_option, data = atoms),
+                                           (data = pseudos,), dftus)
+
         else
-            @debug "parsing structure"
-            structure = extract_structure!(sysflags, (option = cell_option, data=cell), atsyms,
-                                       (option = atoms_option, data=atoms), (data=pseudos,), nothing)
+            @debug "Parsing pre qe7.2 structure"
+            structure = extract_structure!(sysflags, (option = cell_option, data = cell),
+                                           atsyms,
+                                           (option = atoms_option, data = atoms),
+                                           (data = pseudos,), nothing)
         end
-            
+
         delete!.((sysflags,), (:A, :celldm_1, :celldm, :ibrav, :nat, :ntyp))
         delete!.((sysflags,),
                  [:Hubbard_U, :Hubbard_J0, :Hubbard_alpha, :Hubbard_beta, :Hubbard_J])
@@ -1600,10 +1677,10 @@ function qe_parse_calculation(file)
             s_line = split(lines[i+1])
             k_data = parse.(Int, s_line)
         elseif i + 1 > length(lines)
-        # gamma
+            # gamma
             k_data = nothing
         else
-        # tpiba(_b/_c) and crystal(_b/_c)
+            # tpiba(_b/_c) and crystal(_b/_c)
             nks    = parse(Int, lines[i+1])
             k_data = Vector{NTuple{4,Float64}}(undef, nks)
             for k in 1:nks
@@ -1613,7 +1690,8 @@ function qe_parse_calculation(file)
         end
         push!(datablocks, InputData(:k_points, k_option, k_data))
     end
-    return (flags = allflags, data = datablocks, structure = structure, package = pre_7_2 ? QE : QE7_2)
+    return (flags = allflags, data = datablocks, structure = structure,
+            package = pre_7_2 ? QE : QE7_2)
 end
 
 function qe_writeflag(f, flag, value)
@@ -1643,15 +1721,15 @@ function qe_writeflag(f, flag, value)
     end
 end
 
-# TODO: fix for updated DFTU
+# old qe
 function qe_handle_hubbard_flags!(c::Calculation{QE}, str::Structure)
     u_ats = unique(str.atoms)
     isnc = Structures.isnoncolin(str)
     flags_to_set = []
     ishubbard = any(x -> x.dftu.U != 0 ||
-                    x.dftu.J0 != 0.0 ||
-                    sum(x.dftu.J) != 0 ||
-                    sum(x.dftu.α) != 0, u_ats)
+                             x.dftu.J0 != 0.0 ||
+                             sum(x.dftu.J) != 0 ||
+                             sum(x.dftu.α) != 0, u_ats)
     if ishubbard
         Jmap = map(x -> copy(x.dftu.J), u_ats)
         Jdim = maximum(length.(Jmap))
@@ -1693,12 +1771,12 @@ end
 # TODO nc case is not handled for QE7.2!
 function qe_handle_hubbard_flags!(c::Calculation{QE7_2}, str::Structure)
     u_ats = unique(str.atoms)
-    ishubbard = any(a-> !isempty(a.dftu.types), u_ats)
+    ishubbard = any(a -> !isempty(a.dftu.types), u_ats)
     isnc = Structures.isnoncolin(str)
-        # set_flags!(c, :lda_plus_u => true; print = false)
-        # if isnc
-        #     set_flags!(c, :lda_plus_u_kind => 1; print = false)
-        # end
+    # set_flags!(c, :lda_plus_u => true; print = false)
+    # if isnc
+    #     set_flags!(c, :lda_plus_u_kind => 1; print = false)
+    # end
     # needs to be poped anyway, as they are handled in write_structure
     for f in
         (:lda_plus_u, :lda_plus_u_kind, :Hubbard_U,
@@ -1712,7 +1790,7 @@ end
 function qe_handle_magnetism_flags!(c::Calculation, str::Structure)
     u_ats = unique(str.atoms)
     isnc = Structures.isnoncolin(str)
-    
+
     flags_to_set = []
     mags = map(x -> x.magnetization, u_ats)
     starts = Float64[]
@@ -1737,7 +1815,7 @@ function qe_handle_magnetism_flags!(c::Calculation, str::Structure)
                 end
             end
             push!(flags_to_set, :noncolin => true)
-        # colinear
+            # colinear
         else
             for m in mags
                 push!.((θs, ϕs), 0.0)
@@ -1748,7 +1826,9 @@ function qe_handle_magnetism_flags!(c::Calculation, str::Structure)
                 end
             end
         end
-        append!(flags_to_set, [:starting_magnetization => starts, :angle1 => θs, :angle2 => ϕs, :nspin => 2])
+        append!(flags_to_set,
+                [:starting_magnetization => starts, :angle1 => θs, :angle2 => ϕs,
+                 :nspin => 2])
     end
 
     set_flags!(c, flags_to_set...; print = false)
@@ -1762,14 +1842,15 @@ end
 
 Writes a string represenation to `f`.
 """
-function Base.write(f::IO, calculation::Calculation{T}, structure=nothing) where {T <: AbstractQE}
+function Base.write(f::IO, calculation::Calculation{T},
+                    structure = nothing) where {T<:AbstractQE}
     cursize = f isa IOBuffer ? f.size : 0
     if Calculations.hasflag(calculation, :calculation)
         Calculations.set_flags!(calculation,
                                 :calculation => replace(calculation[:calculation],
                                                         "_" => "-"); print = false)
     end
-    
+
     if exec(calculation.exec) == "ph.x"
         write(f, "--\n")
     end
@@ -1787,11 +1868,12 @@ function Base.write(f::IO, calculation::Calculation{T}, structure=nothing) where
         @assert haskey(calculation, :calculation) "Please set the flag for calculation with name: $(calculation.name)"
         set_flags!(calculation, :pseudo_dir => "."; print = false)
     end
-    
+
     writeflag(flag_data) = qe_writeflag(f, flag_data[1], flag_data[2])
     write_dat(data) = write_data(f, data)
 
-    for name in unique([[:control, :system, :electrons, :ions, :cell]; keys(calculation.flags)...])
+    for name in
+        unique([[:control, :system, :electrons, :ions, :cell]; keys(calculation.flags)...])
         if haskey(calculation.flags, name)
             flags = calculation.flags[name]
             write(f, "&$name\n")
@@ -1805,7 +1887,7 @@ function Base.write(f::IO, calculation::Calculation{T}, structure=nothing) where
                 write(f, "  nat = $nat\n")
                 write(f, "  ntyp = $ntyp\n")
             end
-            
+
             map(writeflag, [(flag, data) for (flag, data) in flags])
             write(f, "/\n\n")
         end
@@ -1842,7 +1924,7 @@ end
 
 function Base.write(f::AbstractString, c::Calculation{QE}, structure)
     open(f, "w") do file
-        write(file, c, structure)
+        return write(file, c, structure)
     end
 end
 
@@ -1856,7 +1938,7 @@ function write_data(f, data)
         write(f, "$data\n")
     elseif typeof(data) <: Vector && length(data[1]) == 1
         write(f, join(string.(data), " "))
-    else 
+    else
         for x in data
             for y in x
                 write(f, " $y")
@@ -1881,30 +1963,35 @@ function write_positions_cell(f, calculation::Calculation{<:AbstractQE}, structu
     write(f,
           join(map(at -> "$(at.name) $(join(at.position_cryst, " "))", structure.atoms),
                "\n"))
-    write(f, "\n\n")
+    return write(f, "\n\n")
 end
 
-write_structure(f, calculation::Calculation{QE}, structure, ishubbard) = write_positions_cell(f, calculation, structure)
+function write_structure(f, calculation::Calculation{QE}, structure, ishubbard)
+    return write_positions_cell(f, calculation, structure)
+end
 function write_structure(f, calculation::Calculation{QE7_2}, structure, ishubbard)
     write_positions_cell(f, calculation, structure)
     if ishubbard
         unique_at = unique(structure.atoms)
-        u_proj = unique(map(x->x.dftu.projection_type, filter(y -> !isempty(y.dftu.types), unique_at)))
+        u_proj = unique(map(x -> x.dftu.projection_type,
+                            filter(y -> !isempty(y.dftu.types), unique_at)))
         if length(u_proj) > 1
             @warn "Found different U proj types for different atoms, this is not supported so we use the first one: $(u_proj[1])"
         end
         write(f, "HUBBARD ($(u_proj[1])) \n")
         for at in unique_at
-            
             atsym = at.element.symbol
             # TODO: to fix
             for (i, t) in enumerate(at.dftu.types)
                 if t == "U"
-                    write(f, "U  $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.values[i])\n")
+                    write(f,
+                          "U  $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.values[i])\n")
                 elseif t == "J"
-                    write(f, "  $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.values[i])\n")
+                    write(f,
+                          "  $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.values[i])\n")
                 elseif t == "J0"
-                    write(f, "J0 $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.values[i])\n")
+                    write(f,
+                          "J0 $(at.name)-$(ELEMENT_TO_N[atsym])$(ELEMENT_TO_L[atsym]) $(at.dftu.values[i])\n")
                 end
             end
 
@@ -1922,7 +2009,8 @@ function write_structure(f, calculation::Calculation{QE7_2}, structure, ishubbar
     end
 end
 
-function qe_generate_pw2wancalculation(c::Calculation{Wannier90}, nscf::Calculation{<:AbstractQE})
+function qe_generate_pw2wancalculation(c::Calculation{Wannier90},
+                                       nscf::Calculation{<:AbstractQE})
     flags = Dict()
     if haskey(nscf, :prefix)
         flags[:prefix] = nscf[:prefix]
@@ -1946,156 +2034,153 @@ function qe_generate_pw2wancalculation(c::Calculation{Wannier90}, nscf::Calculat
     if any(get(c, :berry_task, []) .== ("morb"))
         flags[:write_uHu] = true
     end
-    pw2wanexec = Exec(path =joinpath(dirname(nscf.exec.path), "pw2wannier90.x"), modules = nscf.exec.modules)
+    pw2wanexec = Exec(; path = joinpath(dirname(nscf.exec.path), "pw2wannier90.x"),
+                      modules = nscf.exec.modules)
     run = get(c, :preprocess, false) && c.run
     name = "pw2wan_$(flags[:seedname])"
     out = Calculation(; name = name, data = InputData[],
-                           exec = pw2wanexec, run = run, infile = name*".in", outfile=name*".out")
-    Calculations.set_flags!(out, flags...; print=false)
-    return out 
+                      exec = pw2wanexec, run = run, infile = name * ".in",
+                      outfile = name * ".out")
+    Calculations.set_flags!(out, flags...; print = false)
+    return out
 end
 
 # This is to automatically set the hubbard manifold based on pre 7.2 QE.
 # TODO: allow for multiple DFTU manifolds
-const ELEMENT_TO_L = Dict(
-    :H => "s",
-    :K => "s",
-    :C => "p",
-    :N  => "p",
-    :O  => "p",
-    :As => "p",
-    :Sb => "p",
-    :Se => "p",
-    :Ti => "d",
-    :V  => "d",
-    :Cr => "d",
-    :Mn => "d",
-    :Fe => "d",
-    :Co => "d",
-    :Ni => "d",
-    :Cu => "d",
-    :Zn => "d",
-    :Zr => "d",
-    :Nb => "d",
-    :Mo => "d",
-    :Tc => "d",
-    :Ru => "d",
-    :Rh => "d",
-    :Pd => "d",
-    :Ag => "d",
-    :Cd => "d",
-    :Hf => "d",
-    :Ta => "d",
-    :W  => "d",
-    :Re => "d",
-    :Os => "d",
-    :Ir => "d",
-    :Pt => "d",
-    :Au => "d",
-    :Hg => "d",
-    :Sc => "d",
-    :Y  => "d",
-    :La => "d",
-    :Ga => "d",
-    :In => "d",
-    :Ce => "f",
-    :Pr => "f",
-    :Nd => "f",
-    :Pm => "f",
-    :Sm => "f",
-    :Eu => "f",
-    :Gd => "f",
-    :Tb => "f",
-    :Dy => "f",
-    :Ho => "f",
-    :Er => "f",
-    :Tm => "f",
-    :Yb => "f",
-    :Lu => "f",
-    :Th => "f",
-    :Pa => "f",
-    :U  => "f",
-    :Np => "f",
-    :Pu => "f",
-    :Am => "f",
-    :Cm => "f",
-    :Bk => "f",
-    :Cf => "f",
-    :Es => "f",
-    :Fm => "f",
-    :Md => "f",
-    :No => "f",
-    :Lr => "f"
-)
+const ELEMENT_TO_L = Dict(:H  => "s",
+                          :K  => "s",
+                          :C  => "p",
+                          :N  => "p",
+                          :O  => "p",
+                          :As => "p",
+                          :Sb => "p",
+                          :Se => "p",
+                          :Ti => "d",
+                          :V  => "d",
+                          :Cr => "d",
+                          :Mn => "d",
+                          :Fe => "d",
+                          :Co => "d",
+                          :Ni => "d",
+                          :Cu => "d",
+                          :Zn => "d",
+                          :Zr => "d",
+                          :Nb => "d",
+                          :Mo => "d",
+                          :Tc => "d",
+                          :Ru => "d",
+                          :Rh => "d",
+                          :Pd => "d",
+                          :Ag => "d",
+                          :Cd => "d",
+                          :Hf => "d",
+                          :Ta => "d",
+                          :W  => "d",
+                          :Re => "d",
+                          :Os => "d",
+                          :Ir => "d",
+                          :Pt => "d",
+                          :Au => "d",
+                          :Hg => "d",
+                          :Sc => "d",
+                          :Y  => "d",
+                          :La => "d",
+                          :Ga => "d",
+                          :In => "d",
+                          :Ce => "f",
+                          :Pr => "f",
+                          :Nd => "f",
+                          :Pm => "f",
+                          :Sm => "f",
+                          :Eu => "f",
+                          :Gd => "f",
+                          :Tb => "f",
+                          :Dy => "f",
+                          :Ho => "f",
+                          :Er => "f",
+                          :Tm => "f",
+                          :Yb => "f",
+                          :Lu => "f",
+                          :Th => "f",
+                          :Pa => "f",
+                          :U  => "f",
+                          :Np => "f",
+                          :Pu => "f",
+                          :Am => "f",
+                          :Cm => "f",
+                          :Bk => "f",
+                          :Cf => "f",
+                          :Es => "f",
+                          :Fm => "f",
+                          :Md => "f",
+                          :No => "f",
+                          :Lr => "f")
 
-const ELEMENT_TO_N = Dict(
-    :H  => 1,
-    :C  => 2,
-    :N  => 2,
-    :O  => 2,
-    :Ti => 3,
-    :V  => 3,
-    :Cr => 3,
-    :Mn => 3,
-    :Fe => 3,
-    :Co => 3,
-    :Ni => 3,
-    :Cu => 3,
-    :Zn => 3,
-    :Sc => 3,
-    :Ga => 3,
-    :Se => 3,
-    :Zr => 4,
-    :Nb => 4,
-    :Mo => 4,
-    :Tc => 4,
-    :Ru => 4,
-    :Rh => 4,
-    :Pd => 4,
-    :Ag => 4,
-    :Cd => 4,
-    :K  => 4,
-    :Y  => 4,
-    :La => 4,
-    :Ce => 4,
-    :Pr => 4,
-    :Nd => 4,
-    :Pm => 4,
-    :Sm => 4,
-    :Eu => 4,
-    :Gd => 4,
-    :Tb => 4,
-    :Dy => 4,
-    :Ho => 4,
-    :Er => 4,
-    :Tm => 4,
-    :Yb => 4,
-    :Lu => 4,
-    :In => 4,
-    :As => 4,
-    :Sb => 4,
-    :Hf => 5,
-    :Ta => 5,
-    :W  => 5,
-    :Re => 5,
-    :Os => 5,
-    :Ir => 5,
-    :Pt => 5,
-    :Au => 5,
-    :Hg => 5,
-    :Th => 5,
-    :Pa => 5,
-    :U  => 5,
-    :Np => 5,
-    :Pu => 5,
-    :Am => 5,
-    :Cm => 5,
-    :Bk => 5,
-    :Cf => 5,
-    :Es => 5,
-    :Fm => 5,
-    :Md => 5,
-    :No => 5,
-    :Lr => 5,
-)
-
+const ELEMENT_TO_N = Dict(:H  => 1,
+                          :C  => 2,
+                          :N  => 2,
+                          :O  => 2,
+                          :Ti => 3,
+                          :V  => 3,
+                          :Cr => 3,
+                          :Mn => 3,
+                          :Fe => 3,
+                          :Co => 3,
+                          :Ni => 3,
+                          :Cu => 3,
+                          :Zn => 3,
+                          :Sc => 3,
+                          :Ga => 3,
+                          :Se => 3,
+                          :Zr => 4,
+                          :Nb => 4,
+                          :Mo => 4,
+                          :Tc => 4,
+                          :Ru => 4,
+                          :Rh => 4,
+                          :Pd => 4,
+                          :Ag => 4,
+                          :Cd => 4,
+                          :K  => 4,
+                          :Y  => 4,
+                          :La => 4,
+                          :Ce => 4,
+                          :Pr => 4,
+                          :Nd => 4,
+                          :Pm => 4,
+                          :Sm => 4,
+                          :Eu => 4,
+                          :Gd => 4,
+                          :Tb => 4,
+                          :Dy => 4,
+                          :Ho => 4,
+                          :Er => 4,
+                          :Tm => 4,
+                          :Yb => 4,
+                          :Lu => 4,
+                          :In => 4,
+                          :As => 4,
+                          :Sb => 4,
+                          :Hf => 5,
+                          :Ta => 5,
+                          :W  => 5,
+                          :Re => 5,
+                          :Os => 5,
+                          :Ir => 5,
+                          :Pt => 5,
+                          :Au => 5,
+                          :Hg => 5,
+                          :Th => 5,
+                          :Pa => 5,
+                          :U  => 5,
+                          :Np => 5,
+                          :Pu => 5,
+                          :Am => 5,
+                          :Cm => 5,
+                          :Bk => 5,
+                          :Cf => 5,
+                          :Es => 5,
+                          :Fm => 5,
+                          :Md => 5,
+                          :No => 5,
+                          :Lr => 5)
