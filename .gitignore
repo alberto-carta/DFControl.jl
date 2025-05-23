@@ -38,9 +38,14 @@ deps/abinitflags\.jl
 deps/spglib/
 deps/elkflags\.jl
 deps/qe7.2flags.jl
+logs/
 
 # test assets (should be put into artifacts)
 assets/mpirunflags\.jl
+test/testassets/*
 
 # CondaPkg
 .CondaPkg/*
+
+docs/src/assets/
+assets/calculations
