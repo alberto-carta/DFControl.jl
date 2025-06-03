@@ -7,6 +7,8 @@ const DEPS_DIR = joinpath(dirname(@__DIR__), "deps")
 
 using LinearAlgebra
 using Reexport
+using Printf
+
 @reexport using StaticArrays
 
 using Parameters, StructTypes, Dates
