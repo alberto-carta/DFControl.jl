@@ -86,6 +86,7 @@ function RemoteHPC.load(server::Server, j::Job)
 end
 
 function write_calculations(job::Job; fillexecs=true)
+    # This needs to be documented, it's so unintuitive
     server = Server(job.server)
     t = Threads.@spawn if fillexecs
         fill_execs(job, server)
@@ -97,9 +98,21 @@ function write_calculations(job::Job; fillexecs=true)
     Jobs.sanitize_cutoffs!(job)
     
     calculations = [c.infile => IOBuffer() for c in job.calculations]
+    #this is terribly unintuitive, you are returning here the file buffers and not the calculations
+
     Threads.@threads for i in eachindex(job.calculations)
         c = job.calculations[i]
         write(calculations[i][2], c, job.structure)
+        #additional files
+        for add_arg in keys(c.additional_args)
+            # following is specialized for oscdft, but could be more general
+            if add_arg == "oscdft"
+                println("Detected constrained DFT+U, writing 'oscdft.in' ")
+                local_io = IOBuffer()
+                write(local_io, c.additional_args["oscdft"])
+                push!(calculations, c.additional_args["oscdft"].infile => local_io)
+            end
+        end
     end
 
     wcalcs = filter(x -> eltype(x) == Wannier90, job.calculations)

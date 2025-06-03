@@ -2,7 +2,7 @@
     InputData(name::Symbol, option::Symbol, data::Any)
 
 Represents a more structured block of input data.
-e.g. `InputData(:k_points, :automatic, [6,6,6,1,1,1])`
+e.g. `InputData(:k_points, :automatic, [6,6,6,1,1,1])`:
 would be translated for a QE calculation into
 ```
 K_POINTS(automatic)
@@ -75,10 +75,11 @@ Creates a new [`Calculation`](@ref) from the `template`, setting the `flags` of 
     run::Bool = true
     infile::String = name * ".in"
     outfile::String = name * ".out"
+    additional_args::Dict{Any,Any} = Dict{Any,Any}() # for additional input files for a single calculation
 end
 
 function Calculation(name, flags, data, e, run, infile,
-                            outfile)
+                            outfile; additional_args = nothing)
     if exec(e) ∈ Calculations.WAN_EXECS
         p = Wannier90
     elseif exec(e) ∈ Calculations.QE_EXECS
@@ -88,7 +89,7 @@ function Calculation(name, flags, data, e, run, infile,
     else
         error("Package not identified from execs $(exec(e)).")
     end
-    return Calculation{p}(name, flags, data, e, run, infile, outfile)
+    return Calculation{p}(name, flags, data, e, run, infile, outfile; additional_args)
 end
 
 function Calculation(name::String, flags::Pair{Symbol}...; kwargs...)
@@ -103,7 +104,7 @@ function Calculation{p}(name::String, flags::Pair{Symbol}...; kwargs...) where {
 end
 
 function Calculation(template::Calculation, name::String, newflags::Pair{Symbol}...;
-                     excs = deepcopy(template.exec), run  = true, data = nothing)
+                     excs = deepcopy(template.exec), run  = true, data = nothing, additional_args=nothing)
     newflags = Dict(newflags...)
 
     calculation       = deepcopy(template)
@@ -123,6 +124,14 @@ function Calculation(template::Calculation, name::String, newflags::Pair{Symbol}
             end
         end
     end
+
+    if additional_args !== nothing
+        # Iterate over the provided additional_args and assign them
+        for (key, value) in additional_args
+            calculation.additional_args[key] = value
+        end
+    end
+
     return calculation
 end
 function Calculation(dict::JSON3.Object)
@@ -165,6 +174,14 @@ The former returns `calculation.data`, the later -- the `InputData` with name `n
 """
 data(calculation::Calculation, n::Symbol) = getfirst(x -> x.name == n, calculation.data)
 Base.eltype(::Calculation{T}) where {T} = T
+
+# additional optional files for some calculations
+mutable struct OSCDFT_Struct
+    parameters::Dict{Symbol, Any}
+    occupation_numbers::AbstractArray{Float64, 4}
+    infile::String
+end
+
 
 #
 # Flag Dict interace

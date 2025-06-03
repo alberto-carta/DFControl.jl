@@ -1,6 +1,7 @@
 import Base: parse
 import ..Structures: hubbard_type, element
 import .FileIO: NeedleType
+import Printf: @sprintf
 
 function readoutput(c::Calculation{<:AbstractQE}, files...; kwargs...)
     return qe_parse_output(c, files...; kwargs...)
@@ -1927,6 +1928,51 @@ function Base.write(f::AbstractString, c::Calculation{QE}, structure)
         return write(file, c, structure)
     end
 end
+
+# write OSCDFT file
+function Base.write(io::IO, data::OSCDFT_Struct)
+        print("Inside func")
+        write(io, " &OSCDFT\n")
+        for (key, value) in data.parameters # Access parameters via data.parameters
+            # Format values back to string, handling floats with appropriate precision
+            value_str = if isa(value, Float64)
+                string(value)
+            else
+                string(value)
+            end
+            write(io, " $(key) = $(value_str),\n") # Add comma and newline
+        end
+        write(io, "/\n")
+
+        # Write TARGET_OCCUPATION_NUMBERS section
+        write(io, "TARGET_OCCUPATION_NUMBERS\n")
+        # Iterate through the 4D array using CartesianIndices to get all (idx1, idx2, idx3, idx4)
+        # This naturally ensures the output order matches the input file's structure.
+        for I in CartesianIndices(data.occupation_numbers) # Access occupation_numbers via data.occupation_numbers
+            idx1, idx2, idx3, idx4 = Tuple(I)
+            value = data.occupation_numbers[I] # Access value using CartesianIndex
+
+            # Format each number with appropriate spacing
+            formatted_row = join([
+                lpad(string(idx1), 2),
+                lpad(string(idx2), 2),
+                lpad(string(idx3), 2),
+                lpad(string(idx4), 2),
+                @sprintf("%8.3f", value)
+            ], " ")
+            write(io, " $(formatted_row)\n")
+        end
+    return nothing
+end
+
+
+function Base.write(f::AbstractString, data::OSCDFT_Struct)
+    open(f, "w") do file
+        write(file, data)
+    end
+end
+
+
 
 # TODO: this is a bit counter-intuitive maybe?
 # Maybe tuple should be grouped into one line string

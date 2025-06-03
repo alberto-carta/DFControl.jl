@@ -16,5 +16,5 @@ include("documentation.jl")
 include("julia.jl")
 
 export Calculation, InputData
-export Wannier90, AbstractQE, QE, QE7_2, Abinit, Elk, Julia, set_flags!, convert_to_7_2
+export Wannier90, AbstractQE, QE, QE7_2, Abinit, Elk, Julia, set_flags!, convert_to_7_2, OSCDFT_Struct
 end
