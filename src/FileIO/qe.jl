@@ -1619,6 +1619,14 @@ function qe_parse_calculation(file)
             @debug "current line: " lines[i_hubbard]
             dftus = Dict{Symbol,DFTU}()
             for k in i_hubbard+1:i_hubbard+ntyp
+                @debug k
+                if !checkbounds(Bool, lines, k)
+                    @warn "Attempted to access line $(k) which is out of bounds (file has $(length(lines)) lines). Skipping."
+                    atom_idx = k - i_hubbard
+                    missing_atom_type = atom_idx
+                    error("Expected a Hubbard card entry for atom type '$(missing_atom_type)', but found an empty line at line $(k).")
+                    continue # Skip to next iteration
+                end
                 @debug lines[k]
                 push!(used_lineids, k)
                 isempty(lines[k]) && continue
