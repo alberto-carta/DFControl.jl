@@ -643,7 +643,7 @@ const QE_PW_PARSE_FUNCTIONS::Vector{Pair{NeedleType,Any}} = ["C/m^2" => qe_parse
                                                              "Begin final coordinates" => (x, y, z) -> x[:converged] = true,
                                                              "atom number" => qe_parse_magnetization,
                                                              "--- enter write_ns ---" => qe_parse_Hubbard,
-                                                             "HUBBARD OCCUPATIONS" => qe_parse_Hubbard,
+                                                             "=== HUBBARD OCCUPATIONS ===" => qe_parse_Hubbard,
                                                              "Hubbard energy" => qe_parse_Hubbard_energy,
                                                              "HUBBARD ENERGY" => qe_parse_Hubbard_energy,
                                                              "stan-stan stan-bac" => qe_parse_Hubbard_values,
@@ -1981,19 +1981,55 @@ function Base.write(io::IO, data::OSCDFT_Struct)
         write(io, "TARGET_OCCUPATION_NUMBERS\n")
         # Iterate through the 4D array using CartesianIndices to get all (idx1, idx2, idx3, idx4)
         # This naturally ensures the output order matches the input file's structure.
-        for I in CartesianIndices(data.occupation_numbers) # Access occupation_numbers via data.occupation_numbers
-            idx1, idx2, idx3, idx4 = Tuple(I)
-            value = data.occupation_numbers[I] # Access value using CartesianIndex
+        # for I in CartesianIndices(data.occupation_numbers) # Access occupation_numbers via data.occupation_numbers
+        #     idx1, idx2, idx3, idx4 = Tuple(I)
+        #     value = data.occupation_numbers[I] # Access value using CartesianIndex
 
-            # Format each number with appropriate spacing
-            formatted_row = join([
-                lpad(string(idx1), 2),
-                lpad(string(idx2), 2),
-                lpad(string(idx3), 2),
-                lpad(string(idx4), 2),
-                @sprintf("%8.3f", value)
-            ], " ")
-            write(io, " $(formatted_row)\n")
+        #     # Format each number with appropriate spacing
+        #     formatted_row = join([
+        #         lpad(string(idx1), 2),
+        #         lpad(string(idx2), 2),
+        #         lpad(string(idx3), 2),
+        #         lpad(string(idx4), 2),
+        #         @sprintf("%8.3f", value)
+        #     ], " ")
+        #     write(io, " $(formatted_row)\n")
+        # end
+        for atom_idx in 1:length(data.occupation_numbers)
+
+            if !isassigned(data.occupation_numbers, atom_idx)
+                @warn "No occupation data found for atom index $atom_idx. Skipping during write."
+                continue
+            end
+
+            
+            # new version that can handle atom with different manifold size
+            current_atom_tensor = data.occupation_numbers[atom_idx]
+            # Iterate spin (next slowest), then orb1 (faster), then orb2 (fastest)
+            # dimensions are [orb2, orb1, spin] and we want spin to be slower.
+
+            # Let's use nested loops to guarantee the exact order: atom, spin, orb1, orb2
+            # Dimensions: (max_orb2, max_orb1, max_spin)
+            norb2_max, norb1_max, nspin_max = size(current_atom_tensor)
+
+                for nspin_idx in 1:nspin_max # Iterate spin index
+                    for norb1_idx in 1:norb1_max # Iterate orb1 index
+                        for norb2_idx in 1:norb2_max # Iterate orb2 index
+                            # Access the tensor using its internal order: [orb2, orb1, spin]
+                            value = current_atom_tensor[norb2_idx, norb1_idx, nspin_idx]
+
+                            # Output in the desired order: atom, spin, orb1, orb2
+                            formatted_row = join([
+                                lpad(string(atom_idx), 2),
+                                lpad(string(nspin_idx), 2),
+                                lpad(string(norb1_idx), 2),
+                                lpad(string(norb2_idx), 2),
+                                @sprintf("%8.3f", value)
+                            ], " ")
+                            write(io, " $(formatted_row)\n")
+                        end
+                    end
+                end
         end
     return nothing
 end
