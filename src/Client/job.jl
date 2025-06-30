@@ -43,7 +43,7 @@ function RemoteHPC.load(server::Server, j::Job)
             if c.structure !== nothing
                 push!(structures, c.structure)
             end
-            push!(outcalcs, Calculation{c.package}(splitext(infile)[1], c.flags, c.data, e, calc.run, infile, outfile))
+            push!(outcalcs, Calculation{c.package}(splitext(infile)[1], c.flags, c.data, e, calc.run, infile, outfile, Dict{Any,Any}()))
         end
     end
     if !isempty(structures)

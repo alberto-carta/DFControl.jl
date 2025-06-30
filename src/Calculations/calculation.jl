@@ -178,7 +178,7 @@ Base.eltype(::Calculation{T}) where {T} = T
 # additional optional files for some calculations
 mutable struct OSCDFT_Struct
     parameters::Dict{Symbol, Any}
-    occupation_numbers::AbstractArray{Float64, 4}
+    occupation_numbers::Vector{Array{Float64, 3}} # Changed to a vector of 3D arrays
     infile::String
 end
 
