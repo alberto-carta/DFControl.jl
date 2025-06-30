@@ -51,10 +51,20 @@ function qe_parse_output(c::Calculation{<:AbstractQE}, files...; kwargs...)
 end
 
 function qe_parse_Hubbard(out, line, f)
+    hub_block = parse_Hubbard_block(f)
+    # for some reason Calculation{QE7_2} needs specification of the type compared to QE
+    HubbardStateTuple = @NamedTuple{id::Int64, trace::@NamedTuple{up::Float64, down::Float64, total::Float64}, eigvals::@NamedTuple{up::Vector{Float64}, down::Vector{Float64}}, eigvecs::@NamedTuple{up::Matrix{Float64}, down::Matrix{Float64}}, occupations::@NamedTuple{up::Matrix{Float64}, down::Matrix{Float64}}, magmom::Float64}
+    if eltype(hub_block) != HubbardStateTuple
+        @warn "Converting out[:Hubbard] to correct type", eltype(hub_block)
+        hub_block =  HubbardStateTuple.(hub_block)
+        @warn "Converted", eltype(hub_block)
+    end
+
+
     if !haskey(out, :Hubbard)
-        out[:Hubbard] = [parse_Hubbard_block(f)]
+        out[:Hubbard] = [hub_block]
     else
-        push!(out[:Hubbard], parse_Hubbard_block(f))
+        push!(out[:Hubbard], hub_block)
     end
 end
 
@@ -591,6 +601,7 @@ function qe_parse_Hubbard_values_new(out, line, f)
         line = strip(readline(f))
     end
 
+
     return out[:hubbard_block] = dftus
 end
 
@@ -787,6 +798,15 @@ function qe_parse_pw_output(str;
          :k_cryst, :k_cart, :starting_simplified_dftu, :starting_magnetization)
         pop!(out, f, nothing)
     end
+
+
+    # #  If the main `:Hubbard` vector is `Vector{Any}`, re-construct it to enforce type
+    # if eltype(out[:Hubbard]) == Any
+    #     @warn "Converting main :Hubbard vector to correct type"
+    #     out[:Hubbard] = convert(Vector{Vector{HubbardStateTuple}}, out[:Hubbard])
+    # end
+
+
     return out
 end
 
@@ -1375,14 +1395,19 @@ function extract_atoms!(parsed_flags, atsyms, atom_block, pseudo_block, hubbard_
             pseudo = elkey !== nothing ? pseudo_block.data[elkey] : Pseudo("", "", "")
         end
         speciesid = findfirst(isequal(atsym), atsyms)
-        push!(atoms,
-              Atom(; name = atsym, element = Structures.element(atsym),
-                   position_cart = primv * pos,
-                   position_cryst = UnitfulAtomic.ustrip.(inv(cell) * pos),
-                   pseudo = pseudo,
-                   magnetization = qe_magnetization(speciesid, parsed_flags),
-                   dftu = hubbard_block === nothing ?
-                          qe_DFTU(speciesid, atsyms, parsed_flags) : hubbard_block[atsym]))
+        # CHECK HERE if atom exists
+        if hubbard_block !== nothing && haskey(hubbard_block, atsym)
+            # println("pushing atsym", atsym)
+            
+            push!(atoms,
+                Atom(; name = atsym, element = Structures.element(atsym),
+                    position_cart = primv * pos,
+                    position_cryst = UnitfulAtomic.ustrip.(inv(cell) * pos),
+                    pseudo = pseudo,
+                    magnetization = qe_magnetization(speciesid, parsed_flags),
+                    dftu = hubbard_block === nothing ?
+                            qe_DFTU(speciesid, atsyms, parsed_flags) : hubbard_block[atsym]))
+        end
     end
 
     return atoms
