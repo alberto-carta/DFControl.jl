@@ -53,13 +53,21 @@ end
 function qe_parse_Hubbard(out, line, f)
     hub_block = parse_Hubbard_block(f)
     # for some reason Calculation{QE7_2} needs specification of the type compared to QE
-    HubbardStateTuple = @NamedTuple{id::Int64, trace::@NamedTuple{up::Float64, down::Float64, total::Float64}, eigvals::@NamedTuple{up::Vector{Float64}, down::Vector{Float64}}, eigvecs::@NamedTuple{up::Matrix{Float64}, down::Matrix{Float64}}, occupations::@NamedTuple{up::Matrix{Float64}, down::Matrix{Float64}}, magmom::Float64}
+    HubbardStateTuple = @NamedTuple{id::Int64,
+                                    trace::@NamedTuple{up::Float64,down::Float64,
+                                                       total::Float64},
+                                    eigvals::@NamedTuple{up::Vector{Float64},
+                                                         down::Vector{Float64}},
+                                    eigvecs::@NamedTuple{up::Matrix{Float64},
+                                                         down::Matrix{Float64}},
+                                    occupations::@NamedTuple{up::Matrix{Float64},
+                                                             down::Matrix{Float64}},
+                                    magmom::Float64}
     if eltype(hub_block) != HubbardStateTuple
         @warn "Converting out[:Hubbard] to correct type", eltype(hub_block)
-        hub_block =  HubbardStateTuple.(hub_block)
+        hub_block = HubbardStateTuple.(hub_block)
         @warn "Converted", eltype(hub_block)
     end
-
 
     if !haskey(out, :Hubbard)
         out[:Hubbard] = [hub_block]
@@ -601,7 +609,6 @@ function qe_parse_Hubbard_values_new(out, line, f)
         line = strip(readline(f))
     end
 
-
     return out[:hubbard_block] = dftus
 end
 
@@ -799,13 +806,11 @@ function qe_parse_pw_output(str;
         pop!(out, f, nothing)
     end
 
-
     # #  If the main `:Hubbard` vector is `Vector{Any}`, re-construct it to enforce type
     # if eltype(out[:Hubbard]) == Any
     #     @warn "Converting main :Hubbard vector to correct type"
     #     out[:Hubbard] = convert(Vector{Vector{HubbardStateTuple}}, out[:Hubbard])
     # end
-
 
     return out
 end
@@ -1332,8 +1337,8 @@ end
     To fully use Hubbard correction, use qe7.2 onwards where the input
     takes a dedicated Hubbard block.
 """
-function qe_DFTU(speciesid::Int, atsyms::AbstractVector{Symbol},
-                 parsed_flags::Dict{Symbol,Any})
+function maybe_parse_dftu(speciesid::Int, atsyms::AbstractVector{Symbol},
+                          parsed_flags::Dict{Symbol,Any})
     @warn "Try parsing Hubbard U parameters using old syntax (prior to qe7.2)."
     if haskey(parsed_flags, :Hubbard_U) && !iszero(parsed_flags[:Hubbard_U][speciesid])
         @debug "Hubbard U for atom $speciesid: $(parsed_flags[:Hubbard_U][speciesid])"
@@ -1395,19 +1400,16 @@ function extract_atoms!(parsed_flags, atsyms, atom_block, pseudo_block, hubbard_
             pseudo = elkey !== nothing ? pseudo_block.data[elkey] : Pseudo("", "", "")
         end
         speciesid = findfirst(isequal(atsym), atsyms)
-        # CHECK HERE if atom exists
-        if hubbard_block !== nothing && haskey(hubbard_block, atsym)
-            # println("pushing atsym", atsym)
-            
-            push!(atoms,
-                Atom(; name = atsym, element = Structures.element(atsym),
-                    position_cart = primv * pos,
-                    position_cryst = UnitfulAtomic.ustrip.(inv(cell) * pos),
-                    pseudo = pseudo,
-                    magnetization = qe_magnetization(speciesid, parsed_flags),
-                    dftu = hubbard_block === nothing ?
-                            qe_DFTU(speciesid, atsyms, parsed_flags) : hubbard_block[atsym]))
-        end
+
+        push!(atoms,
+              Atom(; name = atsym, element = Structures.element(atsym),
+                   position_cart = primv * pos,
+                   position_cryst = UnitfulAtomic.ustrip.(inv(cell) * pos),
+                   pseudo = pseudo,
+                   magnetization = qe_magnetization(speciesid, parsed_flags),
+                   dftu = hubbard_block === nothing ?
+                          maybe_parse_dftu(speciesid, atsyms, parsed_flags) :
+                          hubbard_block[atsym]))
     end
 
     return atoms
@@ -1574,8 +1576,11 @@ function qe_parse_calculation(file)
     end
 
     function nextcard(i)
+        if isnothing(i)
+            return length(lines) + 1
+        end
         id = findfirst(j -> j > i, card_ids)
-        return id !== nothing ? card_ids[id] : nothing
+        return isnothing(id) ? length(lines) + 1 : card_ids[id]
     end
 
     used_lineids = Int[]
@@ -1631,6 +1636,7 @@ function qe_parse_calculation(file)
         sysflags = qe_parse_flags(sysblock, nat)
 
         i_hubbard = findcard("hubbard")
+        i_hubnext = nextcard(i_hubbard)
 
         if i_hubbard !== nothing
             @debug "Parsing post qe7.2 Hubbard input"
@@ -1643,18 +1649,18 @@ function qe_parse_calculation(file)
             @debug "parsing `Hubbard` section"
             @debug "current line: " lines[i_hubbard]
             dftus = Dict{Symbol,DFTU}()
-            for k in i_hubbard+1:i_hubbard+ntyp
-                @debug k
-                if !checkbounds(Bool, lines, k)
-                    @warn "Attempted to access line $(k) which is out of bounds (file has $(length(lines)) lines). Skipping."
-                    atom_idx = k - i_hubbard
-                    missing_atom_type = atom_idx
-                    error("Expected a Hubbard card entry for atom type '$(missing_atom_type)', but found an empty line at line $(k).")
-                    continue # Skip to next iteration
-                end
-                @debug lines[k]
+
+            for k in i_hubbard+1:i_hubnext-1
+                @debug "line $k: " lines
                 push!(used_lineids, k)
-                isempty(lines[k]) && continue
+                # if !checkbounds(Bool, lines, k)
+                #     @warn "Attempted to access line $(k) which is out of bounds (file has $(length(lines)) lines). Skipping."
+                #     atom_idx = k - i_hubbard
+                #     missing_atom_type = atom_idx
+                #     error("Expected a Hubbard card entry for atom type '$(missing_atom_type)', but found an empty line at line $(k).")
+                #     continue # Skip to next iteration
+                # end
+
                 hubline = split(lines[k])
                 hubtype = hubline[1]
                 val = parse(Float64, hubline[end])
@@ -1667,6 +1673,13 @@ function qe_parse_calculation(file)
                 push!(dftu.types, hubtype)
                 push!(dftu.manifolds, join(manifolds, " "))
                 push!(dftu.values, val)
+                k += 1
+                # assume that Hubbard card is terminated by an empty line
+                if !checkbounds(Bool, lines, k)
+                    break
+                else
+                    line = lines[k]
+                end
             end
             # add empty DFTU object for atoms without Hubbard values
             map(atsyms) do atsym
@@ -1964,84 +1977,77 @@ end
 
 # write OSCDFT file
 function Base.write(io::IO, data::OSCDFT_Struct)
-        print("Inside func")
-        write(io, " &OSCDFT\n")
-        for (key, value) in data.parameters # Access parameters via data.parameters
-            # Format values back to string, handling floats with appropriate precision
-            value_str = if isa(value, Float64)
-                string(value)
-            else
-                string(value)
-            end
-            write(io, " $(key) = $(value_str),\n") # Add comma and newline
+    print("Inside func")
+    write(io, " &OSCDFT\n")
+    for (key, value) in data.parameters # Access parameters via data.parameters
+        # Format values back to string, handling floats with appropriate precision
+        value_str = if isa(value, Float64)
+            string(value)
+        else
+            string(value)
         end
-        write(io, "/\n")
+        write(io, " $(key) = $(value_str),\n") # Add comma and newline
+    end
+    write(io, "/\n")
 
-        # Write TARGET_OCCUPATION_NUMBERS section
-        write(io, "TARGET_OCCUPATION_NUMBERS\n")
-        # Iterate through the 4D array using CartesianIndices to get all (idx1, idx2, idx3, idx4)
-        # This naturally ensures the output order matches the input file's structure.
-        # for I in CartesianIndices(data.occupation_numbers) # Access occupation_numbers via data.occupation_numbers
-        #     idx1, idx2, idx3, idx4 = Tuple(I)
-        #     value = data.occupation_numbers[I] # Access value using CartesianIndex
+    # Write TARGET_OCCUPATION_NUMBERS section
+    write(io, "TARGET_OCCUPATION_NUMBERS\n")
+    # Iterate through the 4D array using CartesianIndices to get all (idx1, idx2, idx3, idx4)
+    # This naturally ensures the output order matches the input file's structure.
+    # for I in CartesianIndices(data.occupation_numbers) # Access occupation_numbers via data.occupation_numbers
+    #     idx1, idx2, idx3, idx4 = Tuple(I)
+    #     value = data.occupation_numbers[I] # Access value using CartesianIndex
 
-        #     # Format each number with appropriate spacing
-        #     formatted_row = join([
-        #         lpad(string(idx1), 2),
-        #         lpad(string(idx2), 2),
-        #         lpad(string(idx3), 2),
-        #         lpad(string(idx4), 2),
-        #         @sprintf("%8.3f", value)
-        #     ], " ")
-        #     write(io, " $(formatted_row)\n")
-        # end
-        for atom_idx in 1:length(data.occupation_numbers)
+    #     # Format each number with appropriate spacing
+    #     formatted_row = join([
+    #         lpad(string(idx1), 2),
+    #         lpad(string(idx2), 2),
+    #         lpad(string(idx3), 2),
+    #         lpad(string(idx4), 2),
+    #         @sprintf("%8.3f", value)
+    #     ], " ")
+    #     write(io, " $(formatted_row)\n")
+    # end
+    for atom_idx in 1:length(data.occupation_numbers)
+        if !isassigned(data.occupation_numbers, atom_idx)
+            @warn "No occupation data found for atom index $atom_idx. Skipping during write."
+            continue
+        end
 
-            if !isassigned(data.occupation_numbers, atom_idx)
-                @warn "No occupation data found for atom index $atom_idx. Skipping during write."
-                continue
-            end
+        # new version that can handle atom with different manifold size
+        current_atom_tensor = data.occupation_numbers[atom_idx]
+        # Iterate spin (next slowest), then orb1 (faster), then orb2 (fastest)
+        # dimensions are [orb2, orb1, spin] and we want spin to be slower.
 
-            
-            # new version that can handle atom with different manifold size
-            current_atom_tensor = data.occupation_numbers[atom_idx]
-            # Iterate spin (next slowest), then orb1 (faster), then orb2 (fastest)
-            # dimensions are [orb2, orb1, spin] and we want spin to be slower.
+        # Let's use nested loops to guarantee the exact order: atom, spin, orb1, orb2
+        # Dimensions: (max_orb2, max_orb1, max_spin)
+        norb2_max, norb1_max, nspin_max = size(current_atom_tensor)
 
-            # Let's use nested loops to guarantee the exact order: atom, spin, orb1, orb2
-            # Dimensions: (max_orb2, max_orb1, max_spin)
-            norb2_max, norb1_max, nspin_max = size(current_atom_tensor)
+        for nspin_idx in 1:nspin_max # Iterate spin index
+            for norb1_idx in 1:norb1_max # Iterate orb1 index
+                for norb2_idx in 1:norb2_max # Iterate orb2 index
+                    # Access the tensor using its internal order: [orb2, orb1, spin]
+                    value = current_atom_tensor[norb2_idx, norb1_idx, nspin_idx]
 
-                for nspin_idx in 1:nspin_max # Iterate spin index
-                    for norb1_idx in 1:norb1_max # Iterate orb1 index
-                        for norb2_idx in 1:norb2_max # Iterate orb2 index
-                            # Access the tensor using its internal order: [orb2, orb1, spin]
-                            value = current_atom_tensor[norb2_idx, norb1_idx, nspin_idx]
-
-                            # Output in the desired order: atom, spin, orb1, orb2
-                            formatted_row = join([
-                                lpad(string(atom_idx), 2),
-                                lpad(string(nspin_idx), 2),
-                                lpad(string(norb1_idx), 2),
-                                lpad(string(norb2_idx), 2),
-                                @sprintf("%8.3f", value)
-                            ], " ")
-                            write(io, " $(formatted_row)\n")
-                        end
-                    end
+                    # Output in the desired order: atom, spin, orb1, orb2
+                    formatted_row = join([lpad(string(atom_idx), 2),
+                                          lpad(string(nspin_idx), 2),
+                                          lpad(string(norb1_idx), 2),
+                                          lpad(string(norb2_idx), 2),
+                                          @sprintf("%8.3f", value)], " ")
+                    write(io, " $(formatted_row)\n")
                 end
+            end
         end
+    end
     return nothing
 end
 
-
 function Base.write(f::AbstractString, data::OSCDFT_Struct)
     open(f, "w") do file
-        write(file, data)
+        return write(file, data)
     end
 end
-
-
 
 # TODO: this is a bit counter-intuitive maybe?
 # Maybe tuple should be grouped into one line string
