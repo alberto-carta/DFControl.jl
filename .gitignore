@@ -40,9 +40,9 @@ deps/elkflags\.jl
 deps/qe7.2flags.jl
 logs/
 
-# test assets
+# test assets (should be put into artifacts)
 assets/mpirunflags\.jl
-tests/assets/test_job/*
+test/testassets/*
 
 # CondaPkg
 .CondaPkg/*
