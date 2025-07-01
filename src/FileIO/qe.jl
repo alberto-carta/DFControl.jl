@@ -597,7 +597,7 @@ function qe_parse_Hubbard_values_new(out, line, f)
     rx = r"(\w)\((.+)\)\s*=\s*(\d+\.\d+)"
     lsyms = Dict{Char,Int}('s' => 0, 'p' => 1, 'd' => 2, 'f' => 3, 'g' => 4)
     while !isempty(line)
-        @debug "pasrsing hubbard: $line"
+        @debug "parsing hubbard: $line"
         m = match(rx, line)
         type, manifold, value = m.captures
         atsym = Symbol(split(manifold, "-")[1])
@@ -1400,6 +1400,17 @@ function extract_atoms!(parsed_flags, atsyms, atom_block, pseudo_block, hubbard_
             pseudo = elkey !== nothing ? pseudo_block.data[elkey] : Pseudo("", "", "")
         end
         speciesid = findfirst(isequal(atsym), atsyms)
+        
+        # handle DFT+U block 
+        dftu_entry = nothing
+        if hubbard_block === nothing
+            dftu_entry = maybe_parse_dftu(speciesid, atsyms, parsed_flags)
+        elseif haskey(hubbard_block, atsym)
+            dftu_entry = hubbard_block[atsym]
+        else
+            @info "Cannot find a Hubbard block for symbol $atsym"
+            dftu_entry = DFTU()
+        end
 
         push!(atoms,
               Atom(; name = atsym, element = Structures.element(atsym),
@@ -1407,9 +1418,7 @@ function extract_atoms!(parsed_flags, atsyms, atom_block, pseudo_block, hubbard_
                    position_cryst = UnitfulAtomic.ustrip.(inv(cell) * pos),
                    pseudo = pseudo,
                    magnetization = qe_magnetization(speciesid, parsed_flags),
-                   dftu = hubbard_block === nothing ?
-                          maybe_parse_dftu(speciesid, atsyms, parsed_flags) :
-                          hubbard_block[atsym]))
+                   dftu = dftu_entry))
     end
 
     return atoms
